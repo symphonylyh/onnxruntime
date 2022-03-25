@@ -95,13 +95,15 @@ static NodeArg& MergeQkvWeights(Graph& graph, int64_t hidden_size,
                                 const ONNX_NAMESPACE::TensorProto* q_tensor,
                                 const ONNX_NAMESPACE::TensorProto* k_tensor,
                                 const ONNX_NAMESPACE::TensorProto* v_tensor,
+                                const DataTransferManager& dt_manager,
+                                const SessionOptions& sess_options,
                                 bool is_matmul) {
   assert(nullptr != q_tensor);
   assert(nullptr != k_tensor);
   assert(nullptr != v_tensor);
-  Initializer q_initializer(*q_tensor, graph.ModelPath());
-  Initializer k_initializer(*k_tensor, graph.ModelPath());
-  Initializer v_initializer(*v_tensor, graph.ModelPath());
+  Initializer q_initializer(*q_tensor, dt_manager, sess_options, graph.ModelPath());
+  Initializer k_initializer(*k_tensor, dt_manager, sess_options, graph.ModelPath());
+  Initializer v_initializer(*v_tensor, dt_manager, sess_options, graph.ModelPath());
   auto data_type = q_tensor->data_type();
 
   ONNX_NAMESPACE::TensorProto initializer;
@@ -195,6 +197,8 @@ static NodeArg* ConvertMaskToInt32(
 Status AttentionFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const {
   GraphViewer graph_viewer(graph);
   const auto& node_topology_list = graph_viewer.GetNodesInTopologicalOrder();
+  const auto& dt_manager = GetDataTransferManager();
+  const auto& sess_options = GetSessionOptions();
 
   // A map from mask input arg name to the one casted to int32
   std::map<std::string, NodeArg*> mask_int32_map;
@@ -238,7 +242,7 @@ Status AttentionFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level,
       }
 
       if (add_count == 1 && matmul_count == 3 && shape_count == node.GetOutputEdgesCount() - 4) {  // BERT or DistilBert
-        if (AttentionFusion::FuseSubGraph(node, *add_node, graph, hidden_size, mask_int32_map, logger)) {
+        if (AttentionFusion::FuseSubGraph(node, *add_node, dt_manager, sess_options, graph,  hidden_size, mask_int32_map, logger)) {
           fused_count++;
           modified = true;
         }
@@ -260,6 +264,8 @@ Status AttentionFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level,
 
 static bool FuseSubGraphQKImpl(Node& layer_norm,
                                Graph& graph,
+                               const DataTransferManager& dt_manager,
+                               const SessionOptions& sess_options,
                                std::vector<std::reference_wrapper<const Node>>& parent_path_nodes,
                                NodeArg* mask_input,
                                std::map<std::string, NodeArg*>& mask_int32_map,
@@ -371,8 +377,8 @@ static bool FuseSubGraphQKImpl(Node& layer_norm,
   }
 
   // Merge Q, K and V weights
-  NodeArg& qkv_weights = MergeQkvWeights(graph, hidden_size, q_weight_tensor, k_weight_tensor, v_weight_tensor, true);
-  NodeArg& qkv_bias = MergeQkvWeights(graph, hidden_size, q_bias_tensor, k_bias_tensor, v_bias_tensor, false);
+  NodeArg& qkv_weights = MergeQkvWeights(graph, hidden_size, q_weight_tensor, k_weight_tensor, v_weight_tensor, dt_manager, sess_options, true);
+  NodeArg& qkv_bias = MergeQkvWeights(graph, hidden_size, q_bias_tensor, k_bias_tensor, v_bias_tensor, dt_manager, sess_options, false);
   // Create Attention Node.
   const Node& reshape = parent_path_nodes[0];
   const std::array input_defs{layer_norm.MutableOutputDefs()[0], &qkv_weights, &qkv_bias, mask_int32};
@@ -417,6 +423,8 @@ static bool FuseSubGraphQKImpl(Node& layer_norm,
 
 static bool FuseSubGraphQK(Node& layer_norm,
                            Graph& graph,
+                           const DataTransferManager& dt_manager,
+                           const SessionOptions& sess_options,
                            AttentionFusionHelper::AttentionMaskNodes& mask_nodes,
                            NodeArg* mask_input,
                            std::vector<std::reference_wrapper<const Node>>& parent_path_nodes,
@@ -436,7 +444,7 @@ static bool FuseSubGraphQK(Node& layer_norm,
   }
 
   std::vector<NodeIndex> nodes_to_remove;
-  if (!FuseSubGraphQKImpl(layer_norm, graph, parent_path_nodes, mask_input, mask_int32_map, edges, nodes_to_remove, hidden_size,
+  if (!FuseSubGraphQKImpl(layer_norm, graph, dt_manager, sess_options, parent_path_nodes, mask_input, mask_int32_map, edges, nodes_to_remove, hidden_size,
                           num_heads, head_size, logger)) {
     return false;
   }
@@ -508,6 +516,8 @@ However, the first version of attention fusion for distilbert is still supported
 */
 static bool FuseSubGraphQKDistilBert(Node& layer_norm,
                                      Graph& graph,
+                                     const DataTransferManager& dt_manager,
+                                     const SessionOptions& sess_options,
                                      AttentionFusionHelper::AttentionMaskNodesDistilBert& mask_nodes,
                                      NodeArg* mask_input,
                                      std::vector<std::reference_wrapper<const Node>>& parent_path_nodes,
@@ -527,7 +537,7 @@ static bool FuseSubGraphQKDistilBert(Node& layer_norm,
   }
 
   std::vector<NodeIndex> nodes_to_remove;
-  if (!FuseSubGraphQKImpl(layer_norm, graph, parent_path_nodes, mask_input, mask_int32_map, edges, nodes_to_remove, hidden_size,
+  if (!FuseSubGraphQKImpl(layer_norm, graph, dt_manager, sess_options, parent_path_nodes, mask_input, mask_int32_map, edges, nodes_to_remove, hidden_size,
                           num_heads, head_size, logger)) {
     return false;
   }
@@ -613,7 +623,14 @@ After Fusion:
                  |   |
                   Add
 */
-bool AttentionFusion::FuseSubGraph(Node& layer_norm, const Node& add_after_layer_norm, Graph& graph, int64_t hidden_size, std::map<std::string, NodeArg*>& mask_int32_map, const logging::Logger& logger) {
+bool AttentionFusion::FuseSubGraph(Node& layer_norm,
+                                   const Node& add_after_layer_norm,
+                                   const DataTransferManager& dt_manager,
+                                   const SessionOptions& sess_options,
+                                   Graph& graph,
+                                   int64_t hidden_size,
+                                   std::map<std::string, NodeArg*>& mask_int32_map,
+                                   const logging::Logger& logger) {
   std::vector<graph_utils::EdgeEndToMatch> parent_path{
       {0, 0, "Add", {7, 13}, kOnnxDomain},
       {0, 0, "MatMul", {1, 9, 13}, kOnnxDomain},
@@ -679,10 +696,10 @@ bool AttentionFusion::FuseSubGraph(Node& layer_norm, const Node& add_after_layer
 
   if (AttentionFusionHelper::MatchInputMaskSubgraph(graph, qkv_matmul, mask_nodes, logger, false)) {
     NodeArg* mask_input = graph.GetNode(mask_nodes.unsqueeze_1->Index())->MutableInputDefs()[0];
-    return FuseSubGraphQK(layer_norm, graph, mask_nodes, mask_input, parent_path_nodes, hidden_size, num_heads, head_size, mask_int32_map, logger);
+    return FuseSubGraphQK(layer_norm, graph, dt_manager, sess_options, mask_nodes, mask_input, parent_path_nodes, hidden_size, num_heads, head_size, mask_int32_map, logger);
   } else if (AttentionFusionHelper::MatchInputMaskSubgraph(graph, layer_norm, qkv_matmul, mask_nodes_distilbert, record_node_idx, logger)) {
     NodeArg* mask_input = graph.GetNode(mask_nodes_distilbert.equal->Index())->MutableInputDefs()[0];
-    return FuseSubGraphQKDistilBert(layer_norm, graph, mask_nodes_distilbert, mask_input, parent_path_nodes, hidden_size, num_heads, head_size, mask_int32_map, logger);
+    return FuseSubGraphQKDistilBert(layer_norm, graph, dt_manager, sess_options, mask_nodes_distilbert, mask_input, parent_path_nodes, hidden_size, num_heads, head_size, mask_int32_map, logger);
   } else {
     DEBUG_LOG("Failed in match input mask subgraph");
     return false;

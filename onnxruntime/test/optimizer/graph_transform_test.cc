@@ -419,6 +419,7 @@ static void VerifyConstantFoldingWithDequantizeLinear(int quantize_linear_count,
                                                       int dequantize_linear_count,
                                                       int conv_count,
                                                       Graph& graph,
+                                                      const DataTransferManager& dt_manager,
                                                       SessionOptions& session_options,
                                                       const Logger& logger) {
   std::unique_ptr<CPUExecutionProvider> e =
@@ -426,7 +427,7 @@ static void VerifyConstantFoldingWithDequantizeLinear(int quantize_linear_count,
 
   bool has_constant_folding = false;
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  auto transformers = optimizer_utils::GenerateTransformers(TransformerLevel::Level1, session_options, *e.get(), {});
+  auto transformers = optimizer_utils::GenerateTransformers(TransformerLevel::Level1, dt_manager, session_options, *e.get(), {});
   for (auto& transformer : transformers) {
     if (transformer->Name() == "ConstantFolding") {
       ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::move(transformer), TransformerLevel::Level1));
@@ -455,15 +456,15 @@ TEST_F(GraphTransformationTests, ConstantFoldingWithDequantizeLinear) {
 
   SessionOptions session_options;
   // Check DequantizeLinear aren't constant folded for default setting.
-  VerifyConstantFoldingWithDequantizeLinear(1, 3, 1, graph, session_options, *logger_);
+  VerifyConstantFoldingWithDequantizeLinear(1, 3, 1, graph, dt_manager_, session_options, *logger_);
 
   // set kOrtSessionOptionsDisableQuantQDQ to enable it explicitly
   ASSERT_STATUS_OK(session_options.config_options.AddConfigEntry(kOrtSessionOptionsDisableQuantQDQ, "0"));
-  VerifyConstantFoldingWithDequantizeLinear(1, 3, 1, graph, session_options, *logger_);
+  VerifyConstantFoldingWithDequantizeLinear(1, 3, 1, graph, dt_manager_, session_options, *logger_);
 
   // set SessionOptionsEnableQuantQDQ to disable it
   ASSERT_STATUS_OK(session_options.config_options.AddConfigEntry(kOrtSessionOptionsDisableQuantQDQ, "1"));
-  VerifyConstantFoldingWithDequantizeLinear(1, 1, 1, graph, session_options, *logger_);
+  VerifyConstantFoldingWithDequantizeLinear(1, 1, 1, graph, dt_manager_, session_options, *logger_);
 }
 
 TEST_F(GraphTransformationTests, ConstantFolding_RemoveDanglingInputNodesToConstantFoldedNode) {
@@ -2057,17 +2058,17 @@ TEST_F(GraphTransformationTests, ReluClip11Fusion) {
         if (&node == &clip1) {
           // fusion with float16 data and min set to 0
           EXPECT_EQ(type, ONNX_NAMESPACE::TensorProto::DataType::TensorProto_DataType_FLOAT16);
-          MLFloat16 value = *Initializer(*min_input, graph.ModelPath()).data<MLFloat16>();
+          MLFloat16 value = *Initializer(*min_input, dt_manager_, sess_options_, graph.ModelPath()).data<MLFloat16>();
           EXPECT_EQ(math::halfToFloat(value.val), 0.f) << "Min was not 0.f. Got:" << math::halfToFloat(value.val);
         } else if (&node == &clip2) {
           // fusion with float data and min untouched
           EXPECT_EQ(type, ONNX_NAMESPACE::TensorProto::DataType::TensorProto_DataType_FLOAT);
-          float value = *Initializer(*min_input, graph.ModelPath()).data<float>();
+          float value = *Initializer(*min_input, dt_manager_, sess_options_, graph.ModelPath()).data<float>();
           EXPECT_EQ(value, 1.0) << "Min should have remained unchanged but is now " << value;
         } else if (&node == &clip3) {
           // fusion with no min so type comes from input
           EXPECT_EQ(type, ONNX_NAMESPACE::TensorProto::DataType::TensorProto_DataType_FLOAT);
-          float value = *Initializer(*min_input, graph.ModelPath()).data<float>();
+          float value = *Initializer(*min_input, dt_manager_, sess_options_, graph.ModelPath()).data<float>();
           EXPECT_EQ(value, 0.f) << "Min was not 0.f. Got:" << value;
 
         } else {
@@ -2125,7 +2126,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionTest) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 4);
 
@@ -2161,7 +2162,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionOneConstTest) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2196,7 +2197,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionInternalNodeIsOutput) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2232,7 +2233,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionInternalReuseTest) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 5);
 
@@ -2291,7 +2292,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionMultipleValuesInInitializerSubgrap
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2324,7 +2325,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionMultipleValuesInInitializerApplies
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2394,7 +2395,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionConcatSubgraphMultipleOutputs) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2428,7 +2429,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionConcatSubgraph) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2462,7 +2463,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionWithSlice1) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2532,7 +2533,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionConcatSubgraphWithDiv) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2568,7 +2569,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionConcatSubgraphWithMul) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 3);
 
@@ -2602,7 +2603,7 @@ TEST_F(GraphTransformationTests, ReshapeFusionDistilBertTest) {
       const ONNX_NAMESPACE::TensorProto* tensor_proto = graph_utils::GetConstantInitializer(graph, node.InputDefs()[1]->Name());
       ASSERT_TRUE(tensor_proto != nullptr);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager_, sess_options_, graph.ModelPath());
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_INT64);
       EXPECT_EQ(initializer->size(), 4);
 
@@ -2669,7 +2670,7 @@ TEST_F(GraphTransformationTests, CastElimination) {
 
 #ifndef DISABLE_CONTRIB_OPS
 
-static void ValidateAttention(Graph& graph) {
+static void ValidateAttention(Graph& graph, const DataTransferManager& dt_manager, const SessionOptions& sess_options) {
   // Validate the merged weights (initializer) input for Attention node.
   for (const Node& node : graph.Nodes()) {
     if (node.OpType() == "Attention") {
@@ -2680,7 +2681,7 @@ static void ValidateAttention(Graph& graph) {
       ASSERT_TRUE(tensor_proto != nullptr);
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager, sess_options, graph.ModelPath());
       EXPECT_EQ(initializer->size(), 192);
 
       // Validate two rows (2x24 items) for sanity check.
@@ -2744,7 +2745,7 @@ static void ValidateAttention(Graph& graph) {
       ASSERT_TRUE(tensor_proto != nullptr);
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
 
-      auto initializer2 = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer2 = std::make_unique<Initializer>(*tensor_proto, dt_manager, sess_options, graph.ModelPath());
       EXPECT_EQ(initializer2->size(), 24);
 
       std::vector<double> expected_value2 = {
@@ -2789,7 +2790,7 @@ TEST_F(GraphTransformationTests, AttentionFusionInt32Test) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2800,7 +2801,7 @@ TEST_F(GraphTransformationTests, AttentionFusionInt32Test) {
   EXPECT_EQ(op_to_count["Cast"], 0);
   EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
 
-  ValidateAttention(graph);
+  ValidateAttention(graph, dt_manager_, sess_options_);
 }
 
 // Test Attention Fusion with int64 mask and symbolic batch dimension
@@ -2811,7 +2812,7 @@ TEST_F(GraphTransformationTests, AttentionFusionInt64Test) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2822,7 +2823,7 @@ TEST_F(GraphTransformationTests, AttentionFusionInt64Test) {
   EXPECT_EQ(op_to_count["Cast"], 1);  // Cast for int64 mask to int32
   EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
 
-  ValidateAttention(graph);
+  ValidateAttention(graph, dt_manager_, sess_options_);
 }
 
 // Test Attention Fusion with float32 mask and no "cast" node in mask path
@@ -2833,7 +2834,7 @@ TEST_F(GraphTransformationTests, AttentionFusionFloat32Test) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2847,7 +2848,7 @@ TEST_F(GraphTransformationTests, AttentionFusionFloat32Test) {
   EXPECT_EQ(op_to_count["Unsqueeze"], 0);
   EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
 
-  ValidateAttention(graph);
+  ValidateAttention(graph, dt_manager_, sess_options_);
 }
 
 // Test GPT-2 Attention Fusion with past and unidirectional mask
@@ -2858,7 +2859,7 @@ TEST_F(GraphTransformationTests, AttentionFusionWithPastAndUnidirMaskTest) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2885,7 +2886,7 @@ TEST_F(GraphTransformationTests, AttentionFusionWithPastAndNoUnidirMaskTest) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2912,7 +2913,7 @@ TEST_F(GraphTransformationTests, AttentionFusionGPTWithPastAndMaskTest) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2929,7 +2930,7 @@ TEST_F(GraphTransformationTests, AttentionFusionGPTWithPastNoMaskTest) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2946,7 +2947,7 @@ TEST_F(GraphTransformationTests, AttentionFusionGPTTest) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2962,7 +2963,7 @@ TEST_F(GraphTransformationTests, AttentionFusionDistilBertTest) {
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(), TransformerLevel::Level2));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::make_unique<AttentionFusion>(dt_manager_, sess_options_), TransformerLevel::Level2));
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_));
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -3134,12 +3135,12 @@ TEST_F(GraphTransformationTests, BiasGeluSwitchedInputOrder) {
   EXPECT_EQ(ret.first, COMPARE_RESULT::SUCCESS) << ret.second;
 }
 
-static void VerifyGeluApproximation(bool is_enabled, SessionOptions& session_options) {
+static void VerifyGeluApproximation(bool is_enabled, const DataTransferManager& dt_manager, SessionOptions& session_options) {
   std::unique_ptr<CPUExecutionProvider> e =
       std::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
 
   bool has_gelu_approximation = false;
-  auto transformers = optimizer_utils::GenerateTransformers(TransformerLevel::Level2, session_options, *e.get(), {});
+  auto transformers = optimizer_utils::GenerateTransformers(TransformerLevel::Level2, dt_manager, session_options, *e.get(), {});
   for (auto& transformer : transformers) {
     if (transformer->Name() == "GeluApproximation") {
       has_gelu_approximation = true;
@@ -3151,16 +3152,15 @@ static void VerifyGeluApproximation(bool is_enabled, SessionOptions& session_opt
 
 // Test session option configuration for GeluApproximation
 TEST_F(GraphTransformationTests, GeluApproximation_SessionOptionConfig) {
-  SessionOptions session_options;
-
   // GeluApproximation is not enabled by default.
-  VerifyGeluApproximation(false, session_options);
+  SessionOptions sess_options;
+  VerifyGeluApproximation(false, dt_manager_, sess_options);
 
-  ASSERT_STATUS_OK(session_options.config_options.AddConfigEntry(kOrtSessionOptionsEnableGeluApproximation, "1"));
-  VerifyGeluApproximation(true, session_options);
+  ASSERT_STATUS_OK(sess_options.config_options.AddConfigEntry(kOrtSessionOptionsEnableGeluApproximation, "1"));
+  VerifyGeluApproximation(true, dt_manager_, sess_options);
 
-  ASSERT_STATUS_OK(session_options.config_options.AddConfigEntry(kOrtSessionOptionsEnableGeluApproximation, "0"));
-  VerifyGeluApproximation(false, session_options);
+  ASSERT_STATUS_OK(sess_options.config_options.AddConfigEntry(kOrtSessionOptionsEnableGeluApproximation, "0"));
+  VerifyGeluApproximation(false, dt_manager_, sess_options);
 }
 
 // Test Gelu -> FastGelu
@@ -3964,7 +3964,8 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat4) {
   ASSERT_TRUE(op_to_count["com.microsoft.EmbedLayerNormalization"] == 1);
 }
 
-static void EmbedLayerNormFusionFormat5(const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {
+static void EmbedLayerNormFusionFormat5(const DataTransferManager& dt_manager, const SessionOptions& sess_options,
+                                        const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {
   std::shared_ptr<Model> p_model;
   ASSERT_TRUE(Model::Load(file_path, p_model, nullptr, *logger).IsOK());
   Graph& graph = p_model->MainGraph();
@@ -3991,7 +3992,7 @@ static void EmbedLayerNormFusionFormat5(const std::basic_string<ORTCHAR_T>& file
       ASSERT_TRUE(tensor_proto != nullptr);
       EXPECT_EQ(tensor_proto->data_type(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
 
-      auto initializer = std::make_unique<Initializer>(*tensor_proto, graph.ModelPath());
+      auto initializer = std::make_unique<Initializer>(*tensor_proto, dt_manager, sess_options, graph.ModelPath());
       EXPECT_EQ(initializer->size(), 12);
 
       std::vector<double> expected_value = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 8.0, 7.0, 6.0};
@@ -4005,11 +4006,11 @@ static void EmbedLayerNormFusionFormat5(const std::basic_string<ORTCHAR_T>& file
 }
 
 TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat5) {
-  EmbedLayerNormFusionFormat5(MODEL_FOLDER "fusion/embed_layer_norm_format5.onnx", logger_.get());
+  EmbedLayerNormFusionFormat5(dt_manager_, sess_options_, MODEL_FOLDER "fusion/embed_layer_norm_format5.onnx", logger_.get());
 }
 
 TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat5_OpSet13) {
-  EmbedLayerNormFusionFormat5(MODEL_FOLDER "fusion/embed_layer_norm_format5_opset13.onnx", logger_.get());
+  EmbedLayerNormFusionFormat5(dt_manager_, sess_options_, MODEL_FOLDER "fusion/embed_layer_norm_format5_opset13.onnx", logger_.get());
 }
 
 static void EmbedLayerNormFusionFormat6(const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {

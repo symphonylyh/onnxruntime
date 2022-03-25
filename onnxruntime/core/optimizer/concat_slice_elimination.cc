@@ -40,6 +40,8 @@ Status ConcatSliceElimination::ApplyImpl(Graph& graph, bool& modified, int graph
 
 static bool GetSliceInfo(const Graph& graph,
                          const Node& node,
+                         const DataTransferManager& dt_manager,
+                         const SessionOptions& sess_options,
                          const logging::Logger& logger,
                          InlinedVector<int64_t>& starts,
                          InlinedVector<int64_t>& ends,
@@ -82,8 +84,8 @@ static bool GetSliceInfo(const Graph& graph,
     };
 
     auto get_initializer_data =
-        [&graph](const ONNX_NAMESPACE::TensorProto* initializer) -> InlinedVector<int64_t> {
-      Initializer init(*initializer, graph.ModelPath());
+        [&graph, &dt_manager, &sess_options](const ONNX_NAMESPACE::TensorProto* initializer) -> InlinedVector<int64_t> {
+      Initializer init(*initializer, dt_manager, sess_options, graph.ModelPath());
       if (initializer->data_type() == ONNX_NAMESPACE::TensorProto::INT32) {
         int32_t* init_data = init.data<int32_t>();
         return InlinedVector<int64_t>(init_data, init_data + init.size());

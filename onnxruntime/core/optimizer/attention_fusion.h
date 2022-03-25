@@ -13,13 +13,21 @@ Rewrite graph fusing attention subgraph to a single Attention node.
 */
 class AttentionFusion : public GraphTransformer {
  public:
-  AttentionFusion(const InlinedHashSet<std::string_view>& compatible_execution_providers = {}) noexcept
+  AttentionFusion(const DataTransferManager& dt_manager,
+                  const SessionOptions& session_options, 
+                  const InlinedHashSet<std::string_view>& compatible_execution_providers = {})
       : GraphTransformer("AttentionFusion", compatible_execution_providers) {}
 
   Status ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const override;
 
 private:
-  static bool FuseSubGraph(Node& layer_norm, const Node& add_after_layer_norm, Graph& graph, int64_t hidden_size, std::map<std::string, NodeArg*>& mask_index_map, const logging::Logger& logger);
+  static bool FuseSubGraph(Node& layer_norm, const Node& add_after_layer_norm, 
+                           const DataTransferManager& dt_manager,
+                           const SessionOptions& sess_options,
+                           Graph& graph,
+                           int64_t hidden_size,
+                           std::map<std::string, NodeArg*>& mask_index_map,
+                           const logging::Logger& logger);
 };
 
 }  // namespace onnxruntime

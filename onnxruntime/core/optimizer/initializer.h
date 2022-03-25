@@ -9,18 +9,22 @@
 
 #include "core/common/common.h"
 #include "core/common/path.h"
+#include "core/framework/tensor_shape.h"
 #include "core/framework/tensorprotoutils.h"
 #include "core/graph/onnx_protobuf.h"
 #include "core/util/math.h"
 
 namespace onnxruntime {
 
+class DataTransferManager;
+struct SessionOptions;
+
 class Initializer final {
  public:
   // Construct an initializer with the provided name and data type, with all values initialized to 0
   Initializer(ONNX_NAMESPACE::TensorProto_DataType data_type,
               const std::string& name,
-              const std::vector<int64_t>& dims) : dims_(dims), size_(0) {
+              gsl::span<const int64_t> dims) : dims_(dims.begin(), dims.end()), size_(0) {
     data_type_ = data_type;
     name_ = name;
     size_ = std::accumulate(dims_.begin(), dims_.end(), int64_t(1), std::multiplies<int64_t>{});
@@ -65,162 +69,65 @@ class Initializer final {
     }
   }
 
-  Initializer(const ONNX_NAMESPACE::TensorProto& tensor_proto, const Path& model_path) {
-    data_type_ = tensor_proto.data_type();
-    if (utils::HasName(tensor_proto)) {
-      name_ = tensor_proto.name();
-    }
-    dims_.reserve(tensor_proto.dims_size());
-    for (int i = 0; i < tensor_proto.dims_size(); i++) {
-      dims_.push_back(tensor_proto.dims(i));
-    }
-
-    size_ = std::accumulate(dims_.begin(), dims_.end(), static_cast<int64_t>(1), std::multiplies<int64_t>{});
-
-    if (tensor_proto.data_location() != ONNX_NAMESPACE::TensorProto_DataLocation_EXTERNAL) {
-      if (utils::HasRawData(tensor_proto)) {
-        raw_data_.assign(tensor_proto.raw_data().begin(), tensor_proto.raw_data().end());
-      } else {
-        switch (data_type_) {
-          case ONNX_NAMESPACE::TensorProto_DataType_FLOAT16:
-          case ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16: {
-            int64_t size = tensor_proto.int32_data_size();
-            ORT_ENFORCE(size_ == size, "size is different");
-            for (int i = 0; i < size_; i++) {
-              float16_data_.push_back(static_cast<uint16_t>(tensor_proto.int32_data(i)));
-            }
-            break;
-          }
-          case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
-            int64_t size = tensor_proto.float_data_size();
-            ORT_ENFORCE(size_ == size, "size is different");
-            for (int i = 0; i < size_; i++) {
-              float_data_.push_back(tensor_proto.float_data(i));
-            }
-            break;
-          }
-          case ONNX_NAMESPACE::TensorProto_DataType_DOUBLE: {
-            int64_t size = tensor_proto.double_data_size();
-            ORT_ENFORCE(size_ == size, "size is different");
-            for (int i = 0; i < size_; i++) {
-              double_data_.push_back(tensor_proto.double_data(i));
-            }
-            break;
-          }
-          case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
-            int64_t size = tensor_proto.int32_data_size();
-            ORT_ENFORCE(size_ == size, "size is different");
-            for (int i = 0; i < size_; i++) {
-              int8_data_.push_back(static_cast<int8_t>(tensor_proto.int32_data(i)));
-            }
-            break;
-          }
-          case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
-            int64_t size = tensor_proto.int32_data_size();
-            ORT_ENFORCE(size_ == size, "size is different");
-            for (int i = 0; i < size_; i++) {
-              uint8_data_.push_back(static_cast<uint8_t>(tensor_proto.int32_data(i)));
-            }
-            break;
-          }
-          case ONNX_NAMESPACE::TensorProto_DataType_INT32: {
-            int64_t size = tensor_proto.int32_data_size();
-            ORT_ENFORCE(size_ == size, "size is different");
-            for (int i = 0; i < size_; i++) {
-              int32_data_.push_back(tensor_proto.int32_data(i));
-            }
-            break;
-          }
-          case ONNX_NAMESPACE::TensorProto_DataType_INT64: {
-            int64_t size = tensor_proto.int64_data_size();
-            ORT_ENFORCE(size_ == size, "size is different");
-            for (int i = 0; i < size_; i++) {
-              int64_data_.push_back(tensor_proto.int64_data(i));
-            }
-            break;
-          }
-          default:
-            ORT_NOT_IMPLEMENTED(__FUNCTION__, "unsupported data type: ", data_type_);
-            break;
-        }
-      }
-    } else {  // tensor_proto.data_location() == ONNX_NAMESPACE::TensorProto_DataLocation_EXTERNAL
-#if !defined(ORT_MINIMAL_BUILD)
-      const auto status = ReadExternalRawData(tensor_proto, model_path, raw_data_);
-      ORT_ENFORCE(status.IsOK(), "ReadExternalRawData() failed: ", status.ErrorMessage());
-#else
-      ORT_UNUSED_PARAMETER(model_path);
-      ORT_THROW("External data is not supported in an ORT formal model.");
-#endif
-    }
-  }
+  Initializer(const ONNX_NAMESPACE::TensorProto& tensor_proto, const DataTransferManager& dt_manager,
+              const SessionOptions& sess_options, const Path& model_path);
 
   ~Initializer() = default;
 
-  void ToProto(ONNX_NAMESPACE::TensorProto& tensor_proto) {
-    tensor_proto.clear_name();
+  void ToProto(ONNX_NAMESPACE::TensorProto& tensor_proto_result) {
+    ONNX_NAMESPACE::TensorProto tensor_proto;
     if (!name_.empty()) {
       tensor_proto.set_name(name_);
     }
 
-    tensor_proto.clear_dims();
     for (auto d : dims_) {
       tensor_proto.add_dims(d);
     }
 
-    tensor_proto.clear_data_type();
     tensor_proto.set_data_type(data_type_);
 
     if (!raw_data_.empty()) {
-      tensor_proto.clear_raw_data();
       tensor_proto.set_raw_data(raw_data_.data(), raw_data_.size());
     } else {
       switch (data_type_) {
         case ONNX_NAMESPACE::TensorProto_DataType_FLOAT16:
         case ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16: {
-          tensor_proto.clear_int32_data();
           for (int i = 0; i < size_; i++) {
             tensor_proto.add_int32_data(float16_data_[i]);
           }
           break;
         }
         case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
-          tensor_proto.clear_float_data();
           for (int i = 0; i < size_; i++) {
             tensor_proto.add_float_data(float_data_[i]);
           }
           break;
         }
         case ONNX_NAMESPACE::TensorProto_DataType_DOUBLE: {
-          tensor_proto.clear_double_data();
           for (int i = 0; i < size_; i++) {
             tensor_proto.add_double_data(double_data_[i]);
           }
           break;
         }
         case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
-          tensor_proto.clear_int32_data();
           for (int i = 0; i < size_; i++) {
             tensor_proto.add_int32_data(int8_data_[i]);
           }
           break;
         }
         case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
-          tensor_proto.clear_int32_data();
           for (int i = 0; i < size_; i++) {
             tensor_proto.add_int32_data(uint8_data_[i]);
           }
           break;
         }
         case ONNX_NAMESPACE::TensorProto_DataType_INT32: {
-          tensor_proto.clear_int32_data();
           for (int i = 0; i < size_; i++) {
             tensor_proto.add_int32_data(int32_data_[i]);
           }
           break;
         }
         case ONNX_NAMESPACE::TensorProto_DataType_INT64: {
-          tensor_proto.clear_int64_data();
           for (int i = 0; i < size_; i++) {
             tensor_proto.add_int64_data(int64_data_[i]);
           }
@@ -231,6 +138,7 @@ class Initializer final {
           break;
       }
     }
+    tensor_proto_result.Swap(&tensor_proto);
   }
 
   ONNX_NAMESPACE::TensorProto ToFP16(const std::string name) {
@@ -407,11 +315,7 @@ class Initializer final {
     return nullptr;
   }
 
-  const std::vector<int64_t>& dims() const {
-    return dims_;
-  }
-
-  const std::vector<int64_t>& dims() {
+  gsl::span<const int64_t> dims() const {
     return dims_;
   }
 
@@ -806,7 +710,7 @@ class Initializer final {
 
   int data_type_;
   std::string name_;
-  std::vector<int64_t> dims_;
+  TensorShapeVector dims_;
   int64_t size_;
 
   std::vector<char> raw_data_;

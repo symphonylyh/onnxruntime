@@ -155,6 +155,7 @@ std::unique_ptr<RuleBasedGraphTransformer> GenerateRuleBasedGraphTransformer(
 
 InlinedVector<std::unique_ptr<GraphTransformer>> GenerateTransformers(
     TransformerLevel level,
+    const DataTransferManager& data_transfer_manager,
     const SessionOptions& session_options,
     const IExecutionProvider& cpu_execution_provider, /*required by constant folding*/
     const InlinedHashSet<std::string>& rules_and_transformers_to_disable) {

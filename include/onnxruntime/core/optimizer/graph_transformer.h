@@ -11,6 +11,9 @@
 
 namespace onnxruntime {
 
+class DataTransferManager;
+struct SessionOptions;
+
 /**
 @class GraphTransformer
 
@@ -18,15 +21,26 @@ The interface for in-place transformation of a Graph.
 */
 class GraphTransformer {
  public:
-  GraphTransformer(const std::string& name,
-      const InlinedHashSet<std::string_view>& compatible_execution_providers = {}) noexcept
+  GraphTransformer(std::string_view name)
+      : name_(name), compatible_provider_types_() {
+  }
+
+  GraphTransformer(std::string_view name,
+                   const InlinedHashSet<std::string_view>& compatible_execution_providers)
       : name_(name), compatible_provider_types_(compatible_execution_providers) {
+  }
+
+  GraphTransformer(std::string_view name,
+                   const DataTransferManager& dt_manager,
+                   const SessionOptions& session_options,
+                   const InlinedHashSet<std::string_view>& compatible_execution_providers = {})
+      : name_(name), dt_manager_(&dt_manager), sess_options_(&session_options), compatible_provider_types_(compatible_execution_providers) {
   }
 
   virtual ~GraphTransformer() = default;
 
   /** Gets the name of this graph transformer. */
-  const std::string& Name() const noexcept {
+  std::string_view Name() const noexcept {
     return name_;
   }
 
@@ -54,6 +68,16 @@ class GraphTransformer {
     return Status::OK();
   }
 
+  const DataTransferManager& GetDataTransferManager() const {
+    ORT_ENFORCE(dt_manager_ != nullptr);
+    return *dt_manager_;
+  }
+
+  const SessionOptions& GetSessionOptions() const {
+    ORT_ENFORCE(sess_options_ != nullptr);
+    return *sess_options_;
+  }
+
  private:
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GraphTransformer);
 
@@ -68,6 +92,8 @@ class GraphTransformer {
       const = 0;
 
   const std::string name_;
+  const DataTransferManager* dt_manager_ = nullptr;
+  const SessionOptions* sess_options_ = nullptr;
   const InlinedHashSet<std::string_view> compatible_provider_types_;
 };
 }  // namespace onnxruntime

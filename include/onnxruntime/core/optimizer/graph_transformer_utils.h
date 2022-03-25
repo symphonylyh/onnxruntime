@@ -21,6 +21,7 @@
 #endif
 
 namespace onnxruntime {
+class DataTransferManager;
 class IExecutionProvider;
 
 namespace optimizer_utils {
@@ -47,6 +48,7 @@ std::unique_ptr<RuleBasedGraphTransformer> GenerateRuleBasedGraphTransformer(
     Any transformers or rewrite rules named in rules_and_transformers_to_disable will be excluded. */
 InlinedVector<std::unique_ptr<GraphTransformer>> GenerateTransformers(
     TransformerLevel level,
+    const DataTransferManager& data_transfer_manager,
     const SessionOptions& session_options,
     const IExecutionProvider& execution_provider /*required by constant folding*/,
     const InlinedHashSet<std::string>& rules_and_transformers_to_disable = {});
