@@ -656,15 +656,19 @@ static const std::unordered_map<std::string, std::vector<int>> onnx_ops_availabl
     {"Gather", {1, 11, 13}},
     {"Transpose", {1, 13}},
     {"Identity", {1, 13, 14, 16}},
+    {"Conv", {1, 11}},
 };
 
 // Based on the opset version imported for this model, returns the since version for the node.
 static int GetSinceVersionForNewOp(std::string_view op_type, std::string_view domain,
                                    const std::unordered_map<std::string, int>& domain_to_version_map) {
   int since_version = -1;
-  ORT_ENFORCE(domain == kOnnxDomain || domain == kMSDomain, "Transpose optimizer is expected to add only onnx and ms domain ops. Domain: ",
+  if (domain == kMSInternalNHWCDomain) {
+    // Search onnx domain instead
+    domain = kOnnxDomain;
+  }
+  ORT_ENFORCE(domain == kOnnxDomain, "Transpose optimizer is expected to add only onnx and MS internal NHWC domain ops. Domain: ",
               domain, " provided for op: ", op_type);
-  if (domain == kMSDomain) return 1;
   auto opset_import_iter = domain_to_version_map.find(std::string(domain));
   ORT_ENFORCE(opset_import_iter != domain_to_version_map.end(), "Onnx domain not found in opset imports.");
 
@@ -683,9 +687,16 @@ static int GetSinceVersionForNewOp(std::string_view op_type, std::string_view do
   return since_version;
 }
 
+// TODO: if domain is not in graph_.DomainToVersionMap(), we need to add it there. But the map is a constant.
 std::unique_ptr<api::NodeRef> ApiGraph::AddNode(std::string_view op_type,
                                                 const std::vector<std::string_view>& inputs, size_t num_outputs,
                                                 std::string_view domain, std::string_view node_name) {
+  auto& dmap = graph_.DomainToVersionMap();
+  if (dmap.find(std::string(domain)) == dmap.end()) {
+    std::ostringstream oss;
+    oss << "Add node failed. No opset import for domain \"" << domain << "\"";
+    ORT_THROW(oss.str());
+  }
   int since_version = GetSinceVersionForNewOp(op_type, domain, graph_.DomainToVersionMap());
   Node& node = CreateNodeHelper(graph_, op_type, inputs, num_outputs,
                                 domain, since_version, new_node_ep_ != nullptr ? new_node_ep_ : "", node_name);

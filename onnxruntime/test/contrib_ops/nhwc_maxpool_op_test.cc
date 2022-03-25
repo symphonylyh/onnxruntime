@@ -149,7 +149,7 @@ class NhwcMaxPoolOpTester {
     std::vector<int64_t> Y_shape;
     ComputeExpectedOutput(Y_data, Y_shape);
 
-    OpTester test("NhwcMaxPool", 1, onnxruntime::kMSDomain);
+    OpTester test("MaxPool", 12, onnxruntime::kMSInternalNHWCDomain);
     test.AddInput<T>("x", X_shape_, X_data_);
     test.AddOutput<T>("y", Y_shape, Y_data);
     test.AddAttribute("kernel_shape", kernel_shape_);

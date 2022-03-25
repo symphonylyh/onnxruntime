@@ -52,10 +52,14 @@ std::optional<HashValue> GetInternalNhwcOpHash(const Node& node) {
       // first input is a tensor. could be uint8 or int8
       bool is_uint8 = input_0_type.tensor_type().elem_type() == utils::ToTensorProtoElementType<uint8_t>();
       return is_uint8 ? 16835965565578160400ULL : 10904143578341560456ULL;
-    } else if (op_type == "NhwcMaxPool") {
+    }
+  } else if (node.Domain() == kMSInternalNHWCDomain) {
+    const auto& op_type = node.OpType();
+    const auto& input_0_type = *node.InputDefs()[0]->TypeAsProto();
+    if (op_type == "MaxPool") {
       // first input is a tensor. could be uint8 or int8
       bool is_uint8 = input_0_type.tensor_type().elem_type() == utils::ToTensorProtoElementType<uint8_t>();
-      return is_uint8 ? 8512357837341844248ULL : 11773579655431087496ULL;
+      return is_uint8 ? 2762130605593336912ULL : 8494818327149965552ULL;
     }
   }
 

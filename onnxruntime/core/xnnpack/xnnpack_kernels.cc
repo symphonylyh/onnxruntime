@@ -10,11 +10,16 @@ namespace xnnpack {
 
 class ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1, XnnPackConvolution2d);
 class ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1, XnnPackDepthwiseConvolution2d);
+class ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1, XnnPackMaxPooling2d);
 
 Status RegisterXNNPackKernels(KernelRegistry& kernel_registry) {
   static const BuildKernelCreateInfoFn function_table[] = {
-      BuildKernelCreateInfo<ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1, XnnPackConvolution2d)>,
-      BuildKernelCreateInfo<ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1, XnnPackDepthwiseConvolution2d)>,
+      BuildKernelCreateInfo<ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1,
+                                                            XnnPackConvolution2d)>,
+      BuildKernelCreateInfo<ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1,
+                                                            XnnPackDepthwiseConvolution2d)>,
+      BuildKernelCreateInfo<ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kXNNPackDomain, 1,
+                                                            XnnPackMaxPooling2d)>,
   };
   for (auto& function_table_entry : function_table) {
     KernelCreateInfo info = function_table_entry();

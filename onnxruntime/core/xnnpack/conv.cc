@@ -4,22 +4,46 @@
 #include "core/xnnpack/conv.h"
 
 #include "core/common/safeint.h"
+#include "core/framework/tensorprotoutils.h"
 #include "core/xnnpack/build_kernel_info.h"
 #include "core/xnnpack/schema/xnnpack_onnx_defs.h"
-#include "core/framework/tensorprotoutils.h"
-
-#define XNNPACK_CPU_MS_DOMAIN_OPERATOR_KERNEL(name, ver, builder, ...) \
-  ONNX_OPERATOR_KERNEL_EX(name, kXNNPackDomain, ver, kCpuExecutionProvider, builder, __VA_ARGS__)
+#include "core/xnnpack/shape_helper.h"
 
 namespace onnxruntime {
 namespace xnnpack {
 
-static bool IsAllDimKnown(const TensorShape& s) {
-  size_t len = s.NumDimensions();
-  for (size_t i = 0; i != len; ++i) {
-    if (s[i] < 0) return false;
+Status XnnPackConvShapeInferKernelImpl(const TensorShape& input_shape, const TensorShape& weight_shape,
+                                       uint32_t input_padding_top, uint32_t input_padding_right,
+                                       uint32_t input_padding_bottom, uint32_t input_padding_left,
+                                       uint32_t subsampling_height, uint32_t subsampling_width, uint32_t dilation_h,
+                                       uint32_t dilation_w, int padding_mode, std::array<int64_t, 4>& output_dims) {
+  if (input_shape.NumDimensions() != 4) {
+    return Status(common::ONNXRUNTIME, common::FAIL, "Input tensor must have 4 dimensions");
   }
-  return true;
+
+  if (weight_shape.NumDimensions() != 4) {
+    return Status(common::ONNXRUNTIME, common::FAIL, "Weight tensor must have 4 dimensions");
+  }
+
+  int64_t input_H_value = input_shape[1];
+  int64_t input_W_value = input_shape[2];
+
+  int64_t input_C = input_shape[3];
+
+  int64_t filter_height = weight_shape[1];
+  int64_t filter_width = weight_shape[2];
+  int64_t in_channels = weight_shape[3];
+  input_H_value += static_cast<int64_t>(input_padding_top) + input_padding_bottom;
+  input_W_value += static_cast<int64_t>(input_padding_right) + input_padding_left;
+
+  OnnxStatus st = ConvShapeInference(input_shape[0], input_H_value, input_W_value, input_C, weight_shape[0],
+                                     filter_height, filter_width, in_channels, subsampling_height, subsampling_width,
+                                     dilation_h, dilation_w, padding_mode, output_dims);
+  if (!st.IsOK()) {
+    return Status(common::ONNXRUNTIME, common::FAIL, st.ErrorMessage());
+  }
+
+  return Status::OK();
 }
 
 Convolution2d::Convolution2d(const OpKernelInfo& info) : OpKernel(info) {
@@ -30,18 +54,23 @@ Convolution2d::Convolution2d(const OpKernelInfo& info) : OpKernel(info) {
 
   ORT_ENFORCE(input_type_proto != nullptr && input_type_proto->has_tensor_type() &&
               input_type_proto->tensor_type().has_shape());
-  ORT_ENFORCE(output_type_proto != nullptr && output_type_proto->has_tensor_type() &&
-              output_type_proto->tensor_type().has_shape());
 
-  output_shape_ = utils::GetTensorShapeFromTensorShapeProto(output_type_proto->tensor_type().shape());
-  has_const_output_shape_ = IsAllDimKnown(output_shape_);
+  if (output_type_proto != nullptr && output_type_proto->has_tensor_type() &&
+      output_type_proto->tensor_type().has_shape()) {
+    output_shape_ = utils::GetTensorShapeFromTensorShapeProto(output_type_proto->tensor_type().shape());
+    has_const_output_shape_ = IsAllDimKnown(output_shape_);
+  } else {
+    // It's ok. We will infer it in this->Compute() function.
+    has_const_output_shape_ = false;
+  }
 
   ORT_ENFORCE(info.TryGetConstantInput(1, &weight));
   ORT_ENFORCE(info.TryGetConstantInput(2, &B));
 
   int64_t input_channels = input_type_proto->tensor_type().shape().dim(3).dim_value();
-  int64_t output_channels = output_type_proto->tensor_type().shape().dim(3).dim_value();
   const TensorShape& kernel_shape = weight->Shape();
+  int64_t output_channels = kernel_shape[0];
+
   int64_t kernel_height = kernel_shape[1];
   int64_t kernel_width = kernel_shape[2];
 
@@ -116,24 +145,15 @@ Status Convolution2d::Compute(OpKernelContext* context) const {
   if (has_const_output_shape_) {
     Y = context->Output(0, output_shape_);
   } else {
-    const ONNX_NAMESPACE::TensorShapeProto* weight_shape = Node().InputDefs()[1]->Shape();
-    ORT_ENFORCE(weight_shape != nullptr);
-    const ONNX_NAMESPACE::TensorShapeProto input_shape = ToTensorShapeProto(X->Shape());
-    ONNX_NAMESPACE::TensorShapeProto final_output_shape;
-
-    OnnxStatus status =
-        XnnPackConvShapeInferImpl(input_shape, *weight_shape, input_padding_top_, input_padding_right_,
-                                  input_padding_bottom_, input_padding_left_, subsampling_height_, subsampling_width_,
-                                  dilation_height_, dilation_width_, padding_mode_, &final_output_shape);
+    std::array<int64_t, 4> output_dims;
+    Status status = XnnPackConvShapeInferKernelImpl(X->Shape(), context->Input<Tensor>(1)->Shape(), input_padding_top_,
+                                                    input_padding_right_, input_padding_bottom_, input_padding_left_,
+                                                    subsampling_height_, subsampling_width_, dilation_height_,
+                                                    dilation_width_, padding_mode_, output_dims);
     if (!status.IsOK()) {
       return Status(common::ONNXRUNTIME, common::FAIL, status.ErrorMessage());
     }
-    TensorShape output_shape = utils::GetTensorShapeFromTensorShapeProto(final_output_shape);
-    if (!IsAllDimKnown(output_shape)) {
-      // If it happens, we have a logic error
-      return Status(common::ONNXRUNTIME, common::FAIL, "Cannot infer output shape");
-    }
-    Y = context->Output(0, output_shape);
+    Y = context->Output(0, TensorShape(output_dims));
   }
 
   const TensorShape& input_shape = X->Shape();

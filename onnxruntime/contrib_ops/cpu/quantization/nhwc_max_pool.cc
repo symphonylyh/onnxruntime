@@ -117,10 +117,11 @@ Status NhwcMaxPool<T8Bits>::Compute(OpKernelContext* context) const {
 }
 
 #define REGISTER_NHWCMAXPOOL_TYPED_KERNEL(T)                      \
-  ONNX_OPERATOR_TYPED_KERNEL_EX(                                  \
-      NhwcMaxPool,                                                \
-      kMSDomain,                                                  \
+  ONNX_OPERATOR_VERSIONED_TYPED_KERNEL_EX(                        \
+      MaxPool,                                                    \
+      kMSInternalNHWCDomain,                                      \
       1,                                                          \
+      12,                                                         \
       T,                                                          \
       kCpuExecutionProvider,                                      \
       KernelDefBuilder()                                          \

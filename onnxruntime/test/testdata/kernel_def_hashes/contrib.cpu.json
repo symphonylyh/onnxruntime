@@ -32,10 +32,6 @@
         13114085849278607104
     ],
     [
-        "NhwcMaxPool com.microsoft CPUExecutionProvider",
-        11773579655431087496
-    ],
-    [
         "ParametricSoftplus ai.onnx CPUExecutionProvider",
         17971715260566574960
     ],
@@ -172,10 +168,6 @@
         2533733396673225096
     ],
     [
-        "NhwcMaxPool com.microsoft CPUExecutionProvider",
-        8512357837341844248
-    ],
-    [
         "NGramRepeatBlock com.microsoft CPUExecutionProvider",
         17162613206685017176
     ],
@@ -294,5 +286,13 @@
     [
       "QGemm com.microsoft CPUExecutionProvider",
       13737193491843065240
+    ],
+    [
+        "MaxPool com.ms.internal.nhwc CPUExecutionProvider",
+        2762130605593336912
+    ],
+    [
+        "MaxPool com.ms.internal.nhwc CPUExecutionProvider",
+        8494818327149965552
     ]
 ]

@@ -4,15 +4,14 @@
 #pragma once
 #include "onnx/defs/schema.h"
 #include "core/graph/contrib_ops/ms_schema.h"
+#include "core/graph/contrib_ops/nhwc_inference_context.h"
 
 namespace onnxruntime {
 namespace contrib {
 //NHWC ops
-class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, NhwcMaxPool);
 class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, QLinearGlobalAveragePool);
 class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, QLinearAveragePool);
 class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, QLinearConv);
-class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, NhwcConv);
 
 //Quantization ops
 class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, DequantizeLinear);
@@ -74,15 +73,32 @@ class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, Trilu);
 class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, Unique);
 class ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, WordConvEmbedding);
 
+#define REGISTER_NHWC_SCHEMA(X, Y) \
+  { RegisterNHWCSchema(fn, ::ONNX_NAMESPACE::GetOpSchema<::ONNX_NAMESPACE::ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Onnx, X, Y)>()); }
+
 class OpSet_Microsoft_ver1 {
  public:
   static void ForEachSchema(std::function<void(ONNX_NAMESPACE::OpSchema&&)> fn) {
-    fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, NhwcMaxPool)>());
     fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, QLinearGlobalAveragePool)>());
     fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, QLinearAveragePool)>());
     fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, QLinearConv)>());
-    fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, NhwcConv)>());
 
+    {
+      REGISTER_NHWC_SCHEMA(1, MaxPool);
+      REGISTER_NHWC_SCHEMA(8, MaxPool);
+      REGISTER_NHWC_SCHEMA(11, MaxPool);
+      REGISTER_NHWC_SCHEMA(12, MaxPool);
+    }
+    {
+      REGISTER_NHWC_SCHEMA(1, AveragePool);
+      REGISTER_NHWC_SCHEMA(7, AveragePool);
+      REGISTER_NHWC_SCHEMA(10, AveragePool);
+      REGISTER_NHWC_SCHEMA(11, AveragePool);
+    }
+    {
+      REGISTER_NHWC_SCHEMA(1, Conv);
+      REGISTER_NHWC_SCHEMA(11, Conv);
+    }
     fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, DequantizeLinear)>());
     fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, DynamicQuantizeLSTM)>());
     fn(GetOpSchema<ONNX_OPERATOR_SET_SCHEMA_CLASS_NAME(Microsoft, 1, DynamicQuantizeMatMul)>());

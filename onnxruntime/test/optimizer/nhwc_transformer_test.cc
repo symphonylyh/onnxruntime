@@ -131,7 +131,7 @@ TEST(NhwcTransformerTests, ConvMaxPool) {
     auto check_nhwc_graph = [&](InferenceSessionWrapper& session) {
       auto op_to_count = CountOpsInGraph(session.GetGraph());
       EXPECT_EQ(op_to_count["com.microsoft.QLinearConv"], 1);
-      EXPECT_EQ(op_to_count["com.microsoft.NhwcMaxPool"], 1);
+      EXPECT_EQ(op_to_count["com.ms.internal.nhwc.MaxPool"], 1);
       EXPECT_EQ(op_to_count["Transpose"], 2);
     };
 
@@ -240,8 +240,8 @@ TEST(NhwcTransformerTests, ConvAveragePool) {
                                         conv2_weight_arg, .015f, 129,
                                         conv2_output_arg, .37f, 131);
     Node& avgpool_node2 = builder.AddQLinearActivationNode("QLinearAveragePool",
-                                                         conv2_output_arg, .37f, 131,
-                                                         avgpool2_output_arg, .37f, 131);
+                                                           conv2_output_arg, .37f, 131,
+                                                           avgpool2_output_arg, .37f, 131);
     avgpool_node2.AddAttribute("kernel_shape", std::vector<int64_t>{3, 3});
     avgpool_node2.AddAttribute("pads", std::vector<int64_t>{1, 1, 1, 1});
 
@@ -500,7 +500,7 @@ TEST(NhwcTransformerTests, ConvMixTensorRanks) {
                     TransformerLevel::Level3);
 }
 
-#endif  // DISABLE_CONTRIB_OPS
+#endif  // !defined(DISABLE_CONTRIB_OPS) && !defined(USE_XNNPACK)
 
 }  // namespace test
 }  // namespace onnxruntime

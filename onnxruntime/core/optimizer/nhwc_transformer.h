@@ -25,6 +25,7 @@ class NhwcTransformer : public GraphTransformer {
 #ifdef USE_XNNPACK
   //Can XNNPack run the conv node?
   static bool IsConvSupportedByXNNPack(const Node& nodeRef, bool input_is_nchw);
+  static bool IsMaxPoolSupportedByXNNPack(const Node& nodeRef, bool input_is_nchw);
 #endif
  private:
   Status ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const override;

@@ -2,7 +2,11 @@
 // Licensed under the MIT License.
 
 #include "xnnpack_onnx_defs.h"
+
 #include <onnx/defs/schema.h>
+
+#include <array>
+#include <safeint/SafeInt.hpp>
 
 using namespace onnx;
 
@@ -12,61 +16,47 @@ namespace xnnpack {
 using ::ONNX_NAMESPACE::Common::StatusCategory;
 using ::ONNX_NAMESPACE::Common::StatusCode;
 
-static OnnxStatus ComputeOutputSizeSame(ptrdiff_t input_size, int stride, ptrdiff_t* output_size) {
-  if (stride == 0) {
-    *output_size = -1;
+OnnxStatus ComputeOutputSizeSame(ptrdiff_t input_size, uint32_t stride, ptrdiff_t* output_size) {
+  if (stride == 0 || input_size <= 0) {
     return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
   }
-  *output_size = input_size + stride - 1;
-  *output_size = *output_size / stride;
-  return ::ONNX_NAMESPACE::Common::Status::OK();
+  size_t r = static_cast<size_t>(input_size) + stride - 1;
+  if (r > static_cast<size_t>(std::numeric_limits<ptrdiff_t>::max())) {
+    return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
+  }
+  *output_size = r / stride;
+  return OnnxStatus::OK();
 }
 
-static OnnxStatus ComputeOutputSizeValid(ptrdiff_t input_size, int stride, ptrdiff_t filter_size,
-                                         uint32_t dilation_rate, ptrdiff_t* output_size) {
-  if (stride == 0) {
-    *output_size = -1;
+OnnxStatus ComputeOutputSizeValid(ptrdiff_t input_size, uint32_t stride, ptrdiff_t filter_size, uint32_t dilation_rate,
+                                  ptrdiff_t* output_size) {
+  if (filter_size < 1) {
+    return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
+  }
+  if (stride <= 0) {
     return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
   }
   if (dilation_rate > 1) {
-    filter_size = (filter_size - 1) * dilation_rate + 1;
+    if (!SafeMultiply(filter_size - 1, dilation_rate, filter_size)) {
+      return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
+    }
+    if (!SafeAdd(filter_size, 1, filter_size)) {
+      return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
+    }
   }
-  if (input_size + 1 <= filter_size) {
-    *output_size = -1;
+
+  if (!SafeSubtract(input_size, filter_size, input_size)) return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
+  if (input_size < 0) {
     return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
   }
-
-  *output_size = input_size - filter_size + stride;
-  *output_size = *output_size / stride;
-  return ::ONNX_NAMESPACE::Common::Status::OK();
-}
-
-// padding_mode: 0, valid. 1, same
-OnnxStatus ConvShapeInference(const ::ONNX_NAMESPACE::TensorShapeProto_Dimension& batch_shape, ptrdiff_t in_height,
-                              ptrdiff_t in_width, ptrdiff_t in_channels,
-                              const ::ONNX_NAMESPACE::TensorShapeProto_Dimension& out_channels, ptrdiff_t filter_height,
-                              ptrdiff_t filter_width, ptrdiff_t in_channels1, uint32_t strides_h, uint32_t strides_w,
-                              uint32_t dilation_h, uint32_t dilation_w, int padding_mode,
-                              ::ONNX_NAMESPACE::TensorShapeProto_Dimension** output) {
-  if (in_channels != in_channels1) {
+  if (!SafeAdd(input_size, stride, input_size)) {
     return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
   }
-
-  *output[0] = batch_shape;
-  ptrdiff_t output1, output2;
-  if (padding_mode == 1) {
-    ONNX_RETURN_IF_ERROR(ComputeOutputSizeSame(in_height, strides_h, &output1));
-    ONNX_RETURN_IF_ERROR(ComputeOutputSizeSame(in_width, strides_w, &output2));
-  } else if (padding_mode == 0) {
-    ONNX_RETURN_IF_ERROR(ComputeOutputSizeValid(in_height, strides_h, filter_height, dilation_h, &output1));
-    ONNX_RETURN_IF_ERROR(ComputeOutputSizeValid(in_width, strides_w, filter_width, dilation_w, &output2));
-  } else {
-    return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL, "Invalid padding mode.");
+  assert(input_size > 0);
+  if (!SafeDivide(input_size, stride, input_size)) {
+    return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL);
   }
-
-  *output[3] = out_channels;
-  output[1]->set_dim_value(output1);
-  output[2]->set_dim_value(output2);
+  *output_size = input_size;
   return ::ONNX_NAMESPACE::Common::Status::OK();
 }
 
@@ -83,32 +73,43 @@ OnnxStatus XnnPackConvShapeInferImpl(const ::ONNX_NAMESPACE::TensorShapeProto& i
   if (weight_shape.dim_size() != 4) {
     return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL, "Weight tensor must have 4 dimensions");
   }
+
+  if (!input_shape.dim(3).has_dim_value()) {
+    return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL, "Channel can not be unknown");
+  }
+  // Though the first dim of weight can be unknown, our implementation doesn't support it.
   for (int i = 1; i != 3; ++i) {
-    if (!input_shape.dim(i).has_dim_value()) {
-      return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL, "Only the first dim(batch size) can be unknown");
-    }
     if (!weight_shape.dim(i).has_dim_value()) {
       return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL, "Only the first dim can be unknown");
     }
   }
-  int64_t input_H = input_shape.dim(1).dim_value();
-  int64_t input_W = input_shape.dim(2).dim_value();
-  int64_t input_C = input_shape.dim(3).dim_value();
-
-  int64_t filter_height = weight_shape.dim(1).dim_value();
-  int64_t filter_width = weight_shape.dim(2).dim_value();
-  int64_t in_channels = weight_shape.dim(3).dim_value();
-  input_H += static_cast<int64_t>(input_padding_top) + input_padding_bottom;
-  input_W += static_cast<int64_t>(input_padding_right) + input_padding_left;
-  ::ONNX_NAMESPACE::TensorShapeProto_Dimension* output_dims[4];
+  const ::ONNX_NAMESPACE::TensorShapeProto_Dimension& input_H = input_shape.dim(1);
+  const ::ONNX_NAMESPACE::TensorShapeProto_Dimension& input_W = input_shape.dim(2);
+  std::array<::ONNX_NAMESPACE::TensorShapeProto_Dimension*, 4> output_dims = {nullptr, nullptr, nullptr, nullptr};
 
   output_dims[0] = final_output_shape->add_dim();
   output_dims[1] = final_output_shape->add_dim();
   output_dims[2] = final_output_shape->add_dim();
   output_dims[3] = final_output_shape->add_dim();
-  ONNX_RETURN_IF_ERROR(ConvShapeInference(input_shape.dim(0), input_H, input_W, input_C, weight_shape.dim(0),
-                                          filter_height, filter_width, in_channels, subsampling_height,
-                                          subsampling_width, dilation_h, dilation_w, padding_mode, output_dims));
+  if (input_H.has_dim_value() && input_W.has_dim_value()) {
+    int64_t input_C = input_shape.dim(3).dim_value();
+
+    int64_t filter_height = weight_shape.dim(1).dim_value();
+    int64_t filter_width = weight_shape.dim(2).dim_value();
+    int64_t in_channels = weight_shape.dim(3).dim_value();
+    int64_t input_H_value = input_H.dim_value();
+    int64_t input_W_value = input_W.dim_value();
+    input_H_value += static_cast<int64_t>(input_padding_top) + input_padding_bottom;
+    input_W_value += static_cast<int64_t>(input_padding_right) + input_padding_left;
+
+    ONNX_RETURN_IF_ERROR(ConvShapeInference(
+        input_shape.dim(0), input_H_value, input_W_value, input_C, weight_shape.dim(0), filter_height, filter_width,
+        in_channels, subsampling_height, subsampling_width, dilation_h, dilation_w, padding_mode, output_dims));
+  } else {
+    *output_dims[0] = input_shape.dim(0);
+    *output_dims[3] = weight_shape.dim(0);
+  }
+
   return OnnxStatus::OK();
 }
 
@@ -127,8 +128,8 @@ OnnxStatus XnnPackDepthwiseConvolution2dShapeInferImpl(const ::ONNX_NAMESPACE::T
     return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL, "Weight tensor must have 4 dimensions");
   }
 
-  int64_t input_H = input_shape.dim(1).dim_value();
-  int64_t input_W = input_shape.dim(2).dim_value();
+  const ::ONNX_NAMESPACE::TensorShapeProto_Dimension& input_H = input_shape.dim(1);
+  const ::ONNX_NAMESPACE::TensorShapeProto_Dimension& input_W = input_shape.dim(2);
   int64_t input_C = input_shape.dim(3).dim_value();
 
   if (input_C == 0) {
@@ -139,29 +140,38 @@ OnnxStatus XnnPackDepthwiseConvolution2dShapeInferImpl(const ::ONNX_NAMESPACE::T
   int64_t size_one = weight_shape.dim(0).dim_value();
   if (size_one != 1) {
     std::ostringstream oss;
-    oss << "The first dim of weight must be one. Got " << size_one << ", " << input_H << ", " << input_W << ", "
-        << input_C << ".";
+    oss << "The first dim of weight must be one. Got " << size_one << ".";
     return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL, oss.str());
   }
   int64_t filter_height = weight_shape.dim(1).dim_value();
   int64_t filter_width = weight_shape.dim(2).dim_value();
-#if 0
-  int64_t input_channels_by_depth_multiplier = weight_shape.dim(3).dim_value();
-  if (input_channels_by_depth_multiplier % input_C != 0) {
-    return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL,
-                      "The last dim of weight is not multiple of input channels.");
+  if (weight_shape.dim(3).has_dim_value()) {
+    int64_t input_channels_by_depth_multiplier = weight_shape.dim(3).dim_value();
+    if (input_channels_by_depth_multiplier % input_C != 0) {
+      return OnnxStatus(StatusCategory::NONE, StatusCode::FAIL,
+                        "The last dim of weight is not multiple of input channels.");
+    }
   }
-#endif
-  input_H += static_cast<int64_t>(input_padding_top) + input_padding_bottom;
-  input_W += static_cast<int64_t>(input_padding_right) + input_padding_left;
-  ::ONNX_NAMESPACE::TensorShapeProto_Dimension* output_dims[4];
+  std::array<::ONNX_NAMESPACE::TensorShapeProto_Dimension*, 4> output_dims = {nullptr, nullptr, nullptr, nullptr};
+
   output_dims[0] = final_output_shape->add_dim();
   output_dims[1] = final_output_shape->add_dim();
   output_dims[2] = final_output_shape->add_dim();
   output_dims[3] = final_output_shape->add_dim();
-  ONNX_RETURN_IF_ERROR(ConvShapeInference(input_shape.dim(0), input_H, input_W, input_C, weight_shape.dim(3),
-                                          filter_height, filter_width, input_C, subsampling_height, subsampling_width,
-                                          dilation_h, dilation_w, padding_mode, output_dims));
+
+  if (input_H.has_dim_value() && input_W.has_dim_value()) {
+    int64_t input_H_value = input_H.dim_value();
+    int64_t input_W_value = input_W.dim_value();
+    input_H_value += static_cast<int64_t>(input_padding_top) + input_padding_bottom;
+    input_W_value += static_cast<int64_t>(input_padding_right) + input_padding_left;
+    ONNX_RETURN_IF_ERROR(ConvShapeInference(
+        input_shape.dim(0), input_H_value, input_W_value, input_C, weight_shape.dim(3), filter_height, filter_width,
+        input_C, subsampling_height, subsampling_width, dilation_h, dilation_w, padding_mode, output_dims));
+  } else {
+    *output_dims[0] = input_shape.dim(0);
+    *output_dims[3] = weight_shape.dim(3);
+  }
+
   return OnnxStatus::OK();
 }
 
@@ -177,7 +187,7 @@ ONNX_XNNPACK_OPERATOR_SET_SCHEMA(
         .Input(0, "X", "", "tensor(float)")
         .Input(1, "W", "", "tensor(float)")
         .Input(2, "B", "", "tensor(float)")
-        .Output(0, "X1", "", "tensor(float)")
+        .Output(0, "Y", "", "tensor(float)")
         .Attr("input_padding_top", "Implicit zero-padding above 2D input data. Must be 0 if padding mode is SAME",
               AttributeProto::INT, static_cast<int64_t>(0))
         .Attr("input_padding_right",
@@ -193,8 +203,6 @@ ONNX_XNNPACK_OPERATOR_SET_SCHEMA(
         .Attr("dilation_height", "dilation_height. TFLite dilation_height_factor", AttributeProto::INT)
         .Attr("dilation_width", "dilation_width. TFLite dilation_width_factor", AttributeProto::INT)
         .Attr("groups", "groups", AttributeProto::INT)
-        //.Attr("group_input_channels", "group_input_channels", AttributeProto::INT)
-        //.Attr("group_output_channels", "group_output_channels", AttributeProto::INT)
         .Attr("padding_mode", "0:VALID. 1:SAME.", AttributeProto::INT)
         .Attr("output_min", "output_min", AttributeProto::FLOAT, -INFINITY)
         .Attr("output_max", "output_max", AttributeProto::FLOAT, INFINITY)
@@ -224,6 +232,42 @@ ONNX_XNNPACK_OPERATOR_SET_SCHEMA(
           }
         }));
 
+ONNX_XNNPACK_OPERATOR_SET_SCHEMA(
+    XnnPackMaxPooling2d, 1,
+    OpSchema()
+        .Input(0, "X", "", "T")
+        .Output(0, "Y", "", "T")
+        .TypeConstraint("T",
+                        {"tensor(float16)", "tensor(float)", "tensor(double)", "tensor(int8)", "tensor(int16)",
+                         "tensor(int32)", "tensor(int64)", "tensor(uint8)", "tensor(uint16)", "tensor(uint32)",
+                         "tensor(uint64)", "tensor(bool)", "tensor(string)", "tensor(bfloat16)"},
+                        "")
+        .Attr("input_padding_top", "Implicit zero-padding above 2D input data. Must be 0 if padding mode is SAME",
+              AttributeProto::INT, static_cast<int64_t>(0))
+        .Attr("input_padding_right",
+              "Implicit zero-padding to the right of 2D input data. Must be 0 if padding mode is SAME",
+              AttributeProto::INT, static_cast<int64_t>(0))
+        .Attr("input_padding_bottom", "Implicit zero-padding below 2D input data. Must be 0 if padding mode is SAME",
+              AttributeProto::INT, static_cast<int64_t>(0))
+        .Attr("input_padding_left",
+              "Implicit zero-padding to the left of 2D input data. Must be 0 if padding mode is SAME",
+              AttributeProto::INT, static_cast<int64_t>(0))
+        .Attr("pooling_height", "Pooling (kernel) height.", AttributeProto::INT)
+        .Attr("pooling_width", "Pooling (kernel) width.", AttributeProto::INT)
+        .Attr("stride_height",
+              "Displacing of the pooling window in the vertical dimension of the input pixels corresponding to "
+              "vertically adjacent output pixels.",
+              AttributeProto::INT)
+        .Attr("stride_width",
+              "Displacing of the pooling window in the horizontal dimension of the input pixels corresponding to "
+              "horizontally adjacent output pixels.",
+              AttributeProto::INT)
+        .Attr("dilation_height", "Dilation of pooling elements along the height dimension.", AttributeProto::INT)
+        .Attr("dilation_width", "Dilation of pooling elements along the width dimension.", AttributeProto::INT)
+        .Attr("padding_mode", "0:VALID. 1:SAME.", AttributeProto::INT)
+        .Attr("output_min", "output_min", AttributeProto::FLOAT, -INFINITY)
+        .Attr("output_max", "output_max", AttributeProto::FLOAT, INFINITY));
+
 // Compare to the signatures of xnn_define_convolution_2d function, this schema doesn't have
 // 1. kernel_height. Because it is just a dimension size of the weights
 // 2. kernel_width. Because it is just a dimension size of the weights
@@ -238,13 +282,11 @@ ONNX_XNNPACK_OPERATOR_SET_SCHEMA(
         .Input(0, "X", "", "tensor(float)")
         .Input(1, "W", "Shape:[1, kernel_height, kernel_width, input_channels * depth_multiplier]", "tensor(float)")
         .Input(2, "B", "", "tensor(float)")
-        .Output(0, "X1", "", "tensor(float)")
+        .Output(0, "Y", "", "tensor(float)")
         .Attr("input_padding_top", "input_padding_top", AttributeProto::INT, static_cast<int64_t>(0))
         .Attr("input_padding_right", "input_padding_right", AttributeProto::INT, static_cast<int64_t>(0))
         .Attr("input_padding_bottom", "input_padding_bottom", AttributeProto::INT, static_cast<int64_t>(0))
         .Attr("input_padding_left", "input_padding_left", AttributeProto::INT, static_cast<int64_t>(0))
-        //.Attr("kernel_height", "kernel_height", AttributeProto::INT) //TODO: is it just a dim of W?
-        //.Attr("kernel_width", "kernel_width", AttributeProto::INT)//TODO: is it just a dim of W?
         .Attr("subsampling_height", "subsampling_height. TFLite stride_height", AttributeProto::INT)
         .Attr("subsampling_width", "subsampling_width. TFLite stride_width", AttributeProto::INT)
         .Attr("dilation_height", "dilation_height. TFLite dilation_height_factor", AttributeProto::INT)
