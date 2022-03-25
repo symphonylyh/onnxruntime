@@ -4,6 +4,8 @@
 #pragma once
 #include <onnx/defs/shape_inference.h>
 #include <onnx/defs/schema.h>
+#include <core/graph/constants.h>
+
 namespace onnxruntime {
 namespace contrib {
 class NhwcInferenceContext : public ::ONNX_NAMESPACE::InferenceContext {
