@@ -3,6 +3,7 @@
 
 #pragma once
 #include <string>
+#include <functional>
 
 #include "core/common/common.h"
 #include "core/common/inlined_containers.h"
@@ -11,8 +12,10 @@
 
 namespace onnxruntime {
 
-class DataTransferManager;
-struct SessionOptions;
+class Tensor;
+
+using ExtractSharedInitializerFn =
+    std::function<bool(const ONNX_NAMESPACE::TensorProto&, Tensor& result)>;
 
 /**
 @class GraphTransformer
@@ -21,7 +24,7 @@ The interface for in-place transformation of a Graph.
 */
 class GraphTransformer {
  public:
-  GraphTransformer(std::string_view name)
+  explicit GraphTransformer(std::string_view name)
       : name_(name), compatible_provider_types_() {
   }
 
@@ -31,10 +34,9 @@ class GraphTransformer {
   }
 
   GraphTransformer(std::string_view name,
-                   const DataTransferManager& dt_manager,
-                   const SessionOptions& session_options,
+                   ExtractSharedInitializerFn shared_initializer_extactor,
                    const InlinedHashSet<std::string_view>& compatible_execution_providers = {})
-      : name_(name), dt_manager_(&dt_manager), sess_options_(&session_options), compatible_provider_types_(compatible_execution_providers) {
+      : name_(name), shared_initializer_extactor_(std::move(shared_initializer_extactor)), compatible_provider_types_(compatible_execution_providers) {
   }
 
   virtual ~GraphTransformer() = default;
@@ -68,14 +70,9 @@ class GraphTransformer {
     return Status::OK();
   }
 
-  const DataTransferManager& GetDataTransferManager() const {
-    ORT_ENFORCE(dt_manager_ != nullptr);
-    return *dt_manager_;
-  }
-
-  const SessionOptions& GetSessionOptions() const {
-    ORT_ENFORCE(sess_options_ != nullptr);
-    return *sess_options_;
+  const ExtractSharedInitializerFn& GetInitializerExtractorFn() const {
+    ORT_ENFORCE(shared_initializer_extactor_, "ExtractSharedInitializerFn function must be initialized");
+    return shared_initializer_extactor_;
   }
 
  private:
@@ -92,8 +89,7 @@ class GraphTransformer {
       const = 0;
 
   const std::string name_;
-  const DataTransferManager* dt_manager_ = nullptr;
-  const SessionOptions* sess_options_ = nullptr;
+  ExtractSharedInitializerFn shared_initializer_extactor_;
   const InlinedHashSet<std::string_view> compatible_provider_types_;
 };
 }  // namespace onnxruntime

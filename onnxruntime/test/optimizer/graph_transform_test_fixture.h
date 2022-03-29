@@ -16,10 +16,7 @@ namespace test {
 
 class GraphTransformationTests : public ::testing::Test {
  protected:
-  GraphTransformationTests() {
-    ORT_IGNORE_RETURN_VALUE(dt_manager_.RegisterDataTransfer(std::make_unique<CPUDataTransfer>()));
-    logger_ = DefaultLoggingManager().CreateLogger("GraphTransformationTests");
-  }
+  GraphTransformationTests();
 
   DataTransferManager dt_manager_;
   SessionOptions sess_options_;

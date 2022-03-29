@@ -75,8 +75,8 @@
 #include "test/optimizer/graph_transform_test_fixture.h"
 #include "test/providers/provider_test_utils.h"
 #include "test/test_environment.h"
-#include "test/util/include/default_providers.h"
 #include "test/util/include/asserts.h"
+#include "test/util/include/default_providers.h"
 #include "test/util/include/inference_session_wrapper.h"
 #include "test/util/include/temp_dir.h"
 
@@ -85,6 +85,15 @@ using namespace ONNX_NAMESPACE;
 
 namespace onnxruntime {
 namespace test {
+
+GraphTransformationTests::GraphTransformationTests() {
+  ORT_IGNORE_RETURN_VALUE(dt_manager_.RegisterDataTransfer(DefaultCpuExecutionProvider()->GetDataTransfer()));
+#ifdef USE_CUDA
+  ORT_IGNORE_RETURN_VALUE(dt_manager_.RegisterDataTransfer(DefaultCudaExecutionProvider()->GetDataTransfer()));
+#endif
+  logger_ = DefaultLoggingManager().CreateLogger("GraphTransformationTests");
+}
+
 
 #define MODEL_FOLDER ORT_TSTR("testdata/transform/")
 
