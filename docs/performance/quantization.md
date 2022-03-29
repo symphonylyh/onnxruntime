@@ -98,11 +98,11 @@ quantized_model = quantize_qat(model_fp32, model_quant)
 ### Method selection
 {: .no_toc}
 
-The main difference between dynamic quantization and static quantization is how scale and zero point of activation is calculated. For static quantization, they are calculated offline with calibration data set. All the activations have same scale and zero point. While for dynamic quantization, they are calculated on flight and will be specific for each activation, thus they are more accurate but introduce extra computation overhead.
+The main difference between dynamic quantization and static quantization is how scale and zero point of activation are calculated. For static quantization, they are calculated offline with calibration data set. All the activations have same scale and zero point. While for dynamic quantization, they are calculated on flight and will be specific for each activation, thus they are more accurate but introduce extra computation overhead.
 
 In general, it is recommended to use dynamic quantization for RNN and transformer-based models, and static quantization for CNN models.
 
-If both post-training quantization can not meet your accuracy goal, you can try quantization-aware training (QAT) to retrain the model. ONNX Runtime does not provide retraining at this time, but you can retrain your model with the original framework and reconvert back to ONNX.
+If both post-training quantization can not meet your accuracy goal, you can try quantization-aware training (QAT) to retrain the model. ONNX Runtime does not provide retraining at this time, but you can retrain your models with the original framework and reconvert them back to ONNX.
 
 ### Data type selection
 {: .no_toc}
@@ -111,7 +111,8 @@ Quantization represents value with 8 bit, which can be either int8 and uint8. Co
 
 Let's use U8U8 as as shorthand for (activation:uint8, weight:uint8), and U8S8 for (activation:uint8, weight:int8), and S8U8, S8S8 for other two formats.
 
-Currently, OnnxRuntime CPU only supports activation with type uint8, i.e., U8X8 only.
+OnnxRuntime Quantization on CPU can run U8U8, U8S8 and S8S8, but S8S8 with QDQ format is recommend for blance of performance and accuracy.
+OnnxRuntime Quantization on GPU only support S8S8 format.
 
 #### x86-64
 {: .no_toc }
