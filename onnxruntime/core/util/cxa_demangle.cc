@@ -12,10 +12,9 @@ char* __cxa_demangle(const char* mangled_name, char* output_buffer, size_t* leng
   int i = 0;
   int limit = (int)(*length) - 1;
   for (; i < limit; i++) {
-    if (mangled_name[i] == '\0') break;
     output_buffer[i] = mangled_name[i];
+    if (mangled_name[i] == '\0') break;
   }
-  output_buffer[i] = '\0';
 
   *status = 0;
   return output_buffer;
