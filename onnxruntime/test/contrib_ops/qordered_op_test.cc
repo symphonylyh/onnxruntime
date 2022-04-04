@@ -102,8 +102,8 @@ static std::vector<int8_t> QuantizeTransform(std::vector<int64_t> const& shape, 
           std::cout << "out of bound index calculated, error found in OrderedIndexer" << std::endl;
         }
         float v = (float)bsrc[src_idx] / scale;
-        v = std::max(T(-128.0f), v);
-        v = std::min(T(127.0f), v);
+        v = std::max(-128.0f, v);
+        v = std::min(127.0f, v);
         bdst[dst_idx] = static_cast<int8_t>(std::round(v));
       }
     }
@@ -168,6 +168,13 @@ TEST(QOrderedTest, FP32_Quantize_COL32) {
   RunQOrdered_Quantize_Test(fvec, shape, ORDER_COL32, scale);
 }
 
+TEST(QOrderedTest, FP16_Quantize_COL32) {
+  std::vector<int64_t> shape = {1, 5, 32 * 2};
+  MLFloat16 scale = MLFloat16(1.0f);
+  std::vector<MLFloat16> fvec = GenData<MLFloat16>(shape, scale);
+  RunQOrdered_Quantize_Test(fvec, shape, ORDER_COL32, scale);
+}
+
 TEST(QOrderedTest, FP32_Quantize_COL4_4R2_8C) {
   std::vector<int64_t> shape = {1, 8 * 3, 32 * 2};
   float scale(1.0f);
@@ -199,6 +206,14 @@ static void RunQOrdered_Dequantize_Test(
 TEST(QOrderedTest, FP32_Dequantize_COL32) {
   std::vector<int64_t> shape = {1, 5, 32 * 2};
   float scale = 1.0f;
+  std::vector<int8_t> qvec = GenData<int8_t>(shape, scale);
+  RunQOrdered_Dequantize_Test(qvec, shape, ORDER_COL32, scale);
+}
+
+// Dequantize only work for ORDER_COL32 input
+TEST(QOrderedTest, FP16_Dequantize_COL32) {
+  std::vector<int64_t> shape = {1, 5, 32 * 2};
+  MLFloat16 scale(1.0f);
   std::vector<int8_t> qvec = GenData<int8_t>(shape, scale);
   RunQOrdered_Dequantize_Test(qvec, shape, ORDER_COL32, scale);
 }

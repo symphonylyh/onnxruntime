@@ -306,10 +306,9 @@ QOrderedMatMul::QOrderedMatMul(const OpKernelInfo& info) : CudaKernel(info) {
 }
 
 Status QuantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
-  DUBUG_PERF_CUDA_SYNC();
-
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
+  
   int64_t rows = 0, cols = 0, batch = 0, n = 0;
-
   const Tensor& input_tensor = *context->Input<Tensor>(0);
   ORT_RETURN_IF_ERROR(CheckTensorOrder(input_tensor, (cublasLtOrder_t)order_input_, (cublasLtOrder_t)order_output_, rows, cols, batch, n));
   const void* scale = context->Input<Tensor>(1)->DataRaw();
@@ -318,17 +317,21 @@ Status QuantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
   cudaStream_t stream = Stream();
   const auto& device_prop = GetDeviceProp();
 
-  if (order_output_ == CUBLASLT_ORDER_COL32 && order_input_ == CUBLASLT_ORDER_ROW && input_tensor.IsDataType<MLFloat16>()) {
-    QOrderQuantizeRowToCol32(stream, device_prop, (const half*)input_tensor.Data<MLFloat16>(), output_tensor->MutableData<int8_t>(),
-                                  (float)*(MLFloat16 const*)scale, gsl::narrow_cast<int>(batch), rows, cols);
-    // TODO: more specific kernels
+  if (order_output_ == CUBLASLT_ORDER_COL32 && order_input_ == CUBLASLT_ORDER_ROW) {
+    if (input_tensor.IsDataType<MLFloat16>()) {
+      QOrderQuantizeRowToCol32(stream, device_prop, (const half*)input_tensor.Data<MLFloat16>(), output_tensor->MutableData<int8_t>(),
+                                  (float)*(MLFloat16 const*)scale, gsl::narrow_cast<unsigned>(batch), gsl::narrow_cast<unsigned>(rows), gsl::narrow_cast<unsigned>(cols));
+    } else { // float type
+      QOrderQuantizeRowToCol32(stream, device_prop, input_tensor.Data<float>(), output_tensor->MutableData<int8_t>(),
+                                  *(const float*)scale, gsl::narrow_cast<unsigned>(batch), gsl::narrow_cast<unsigned>(rows), gsl::narrow_cast<unsigned>(cols));
+    }
   } else {
     auto q8_buffer = GetScratchBuffer<int8_t>(order_input_ == order_output_ ? 0LL : n);
-    int8_t* dst = order_input_ == order_output_ ? output_tensor->MutableData<int8_t>() : q8_buffer.get();
+    int8_t* dst = (order_input_ == order_output_ ? output_tensor->MutableData<int8_t>() : q8_buffer.get());
     if (input_tensor.IsDataType<float>()) {
-      ORT_RETURN_IF_ERROR(CudaQuantizeLinear(stream, input_tensor.Data<float>(), dst, (const float*)scale, (const int8_t*)nullptr, n));
+      QOrderQuantize(stream, device_prop, input_tensor.Data<float>(), dst, *(const float*)scale, n);
     } else {
-      ORT_RETURN_IF_ERROR(CudaQuantizeLinear(stream, (const half*)input_tensor.Data<MLFloat16>(), dst, (const half*)scale, (const int8_t*)nullptr, n));
+      QOrderQuantize(stream, device_prop, (const half*)input_tensor.Data<MLFloat16>(), dst, (float)*(const MLFloat16*)scale, n);
     }
 
     if (order_input_ != order_output_) {
@@ -337,12 +340,12 @@ Status QuantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
     }
   }
 
-  DUBUG_PERF_CUDA_SYNC();
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
   return Status::OK();
 }
 
 Status DequantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
-  DUBUG_PERF_CUDA_SYNC();
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
 
   int64_t rows = 0, cols = 0, batch = 0, n = 0;
 
@@ -351,22 +354,20 @@ Status DequantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
   const Tensor& scale_tensor = *context->Input<Tensor>(1);
   const void* scale = scale_tensor.DataRaw();
   Tensor* output_tensor = context->Output(0, input_tensor.Shape());
-  cublasLtHandle_t cublasLt = CublasLtHandle();
+  // cublasLtHandle_t cublasLt = CublasLtHandle();
   cudaStream_t stream = Stream();
   const auto& device_prop = GetDeviceProp();
 
   if (order_output_ == CUBLASLT_ORDER_ROW && order_input_ == CUBLASLT_ORDER_COL32 && output_tensor->IsDataType<MLFloat16>()) {
     QOrderDequantizeCol32ToRow(stream, device_prop, input_tensor.Data<int8_t>(), (half*)output_tensor->MutableData<MLFloat16>(),
                                     (float)*(MLFloat16 const*)scale, batch, rows, cols);
-    // TODO: more specific kernels
   } else {
-    // TODO: scale copy to gpu
     const int8_t* src = input_tensor.Data<int8_t>();
     auto q8_buffer = GetScratchBuffer<int8_t>(order_input_ == order_output_ ? 0LL : n);
     if (order_input_ != order_output_) {
-      src = (const int8_t*)q8_buffer.get();
       ORT_RETURN_IF_ERROR(Reorder(cublasLt, stream, device_prop, gsl::narrow_cast<int>(batch), rows, cols, CUDA_R_8I,
                                   input_tensor.DataRaw(), (cublasLtOrder_t)order_input_, q8_buffer.get(), (cublasLtOrder_t)order_output_));
+      src = (const int8_t*)q8_buffer.get();
     }
     if (scale_tensor.IsDataType<float>()) {
       ORT_RETURN_IF_ERROR(CudaDequantizeLinear(stream, src, output_tensor->MutableData<float>(), (const float*)scale, (const int8_t*)nullptr, n));
@@ -375,12 +376,12 @@ Status DequantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
     }
   }
 
-  DUBUG_PERF_CUDA_SYNC();
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
   return Status::OK();
 }
 
 Status QOrderedMatMul::ComputeInternal(OpKernelContext* context) const {
-  DUBUG_PERF_CUDA_SYNC();
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
 
   int64_t rowsA = 0, colsA = 0, batchA = 1, elementsA = 0;
   int64_t rowsB = 0, colsB = 0, batchB = 1, elementsB = 0;
@@ -436,7 +437,7 @@ Status QOrderedMatMul::ComputeInternal(OpKernelContext* context) const {
                                       bias, &beta, C, batchC == 1,
                                       tensor_Y->MutableData<int8_t>(), (cublasLtOrder_t)order_B_));
 
-  DUBUG_PERF_CUDA_SYNC();
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
   return Status::OK();
 }
 

@@ -39,7 +39,7 @@ QOrderedLayerNormalization::QOrderedLayerNormalization(const OpKernelInfo& op_ke
 }
 
 Status QOrderedLayerNormalization::ComputeInternal(OpKernelContext* ctx) const {
-  DUBUG_PERF_CUDA_SYNC();
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
 
   typedef typename ToCudaType<int8_t>::MappedType CudaQ;
   typedef typename ToCudaType<MLFloat16>::MappedType CudaF;
@@ -77,7 +77,7 @@ Status QOrderedLayerNormalization::ComputeInternal(OpKernelContext* ctx) const {
                   X_data, *scale_x, Y_data, *scale_y, scale_data, bias_data, epsilon_,
                   batch, rows, cols);
 
-  DUBUG_PERF_CUDA_SYNC();
+  LOCATE_ERROR_IF_ENABLED_USING_CUDA_SYNC();
   return Status::OK();
 }
 

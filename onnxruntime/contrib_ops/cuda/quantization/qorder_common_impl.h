@@ -10,6 +10,22 @@ namespace onnxruntime {
 namespace contrib {
 namespace cuda {
 
+void QOrderQuantize(
+    cudaStream_t stream, const cudaDeviceProp& device_prop,
+    const __half* src, int8_t* dst, half scale, size_t N);
+
+void QOrderQuantize(
+    cudaStream_t stream, const cudaDeviceProp& device_prop,
+    const float* src, int8_t* dst, float scale, size_t N);
+
+void QOrderDequantize(
+    cudaStream_t stream, const cudaDeviceProp& device_prop,
+    const int8_t* src, half* dst, half scale, size_t N);
+
+void QOrderDequantize(
+    cudaStream_t stream, const cudaDeviceProp& device_prop,
+    const int8_t* src, float* dst, float scale, size_t N);
+
 void QOrderQuantizeRowToCol32(
     cudaStream_t stream, const cudaDeviceProp& device_prop,
     const __half* src, int8_t* dst, float scale, unsigned batch, unsigned rows, unsigned cols);
