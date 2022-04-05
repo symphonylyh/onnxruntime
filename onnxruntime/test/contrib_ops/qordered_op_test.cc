@@ -314,7 +314,7 @@ static void RunQOrdered_MatMul_Test(
     test_dq.AddInput<int8_t>("C", shapeC, vecC);
     test_dq.AddInput<float>("scale_C", {}, {scaleC});
   }
-  test_dq.AddOutput<int8_t>("Y", shapeY, vecY, false, 0.0f, 1.0f /* abs error */)  
+  test_dq.AddOutput<int8_t>("Y", shapeY, vecY, false, 0.0f, 1.0f /* abs error */);
   test_dq.Run(OpTester::ExpectResult::kExpectSuccess, "", {}, nullptr, &execution_providers);
 }
 
