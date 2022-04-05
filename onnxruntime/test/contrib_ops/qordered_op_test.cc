@@ -276,12 +276,13 @@ static void RunQOrdered_MatMul_Test(
         for (int64_t k = 0; k < colsA; k++) {
           auto posA = indexerA(m, k);
           auto posB = indexerB(n, k);  // Transpose B
-          sum += A[posA] * B[posB] * alpha;
+          sum += A[posA] * B[posB];
         }
-        auto posY = indexerY(m, n);
+        sum *= alpha;
         if (add_bias) {
           sum += vecBias[n];
         }
+        auto posY = indexerY(m, n);
         if (scaleC != 0.0f) {
           sum += scaleC * C[posY];
         }
@@ -313,7 +314,7 @@ static void RunQOrdered_MatMul_Test(
     test_dq.AddInput<int8_t>("C", shapeC, vecC);
     test_dq.AddInput<float>("scale_C", {}, {scaleC});
   }
-  test_dq.AddOutput<int8_t>("Y", shapeY, vecY);
+  test_dq.AddOutput<int8_t>("Y", shapeY, vecY, false, 0.0f, 1.0f /* abs error */)  
   test_dq.Run(OpTester::ExpectResult::kExpectSuccess, "", {}, nullptr, &execution_providers);
 }
 
@@ -322,7 +323,7 @@ TEST(QOrderedTest, MatMul_COL4_4R2_8C_16x32x32) {
   std::vector<int64_t> shapeB = {32, 32};
   std::vector<int64_t> shapeY = {16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4.0f, 1.0f / 4.0f, 0.0f /*scaleC*/, 1.0f / 8.0f,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           false /* add bias */, false /* broadcast batch c */);
 }
 
@@ -331,7 +332,7 @@ TEST(QOrderedTest, MatMul_bias_COL4_4R2_8C_16x32x32) {
   std::vector<int64_t> shapeB = {32, 32};
   std::vector<int64_t> shapeY = {16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4.0f, 1.0f / 4.0f, 0.0f /*scaleC*/, 1.0f / 8.0f,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           true /* add bias */, false /* broadcast batch c */);
 }
 
@@ -340,7 +341,7 @@ TEST(QOrderedTest, MatMul_addC_COL4_4R2_8C_16x32x32) {
   std::vector<int64_t> shapeB = {32, 32};
   std::vector<int64_t> shapeY = {16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4.0f, 1.0f / 4.0f, 1.0f / 5.0f, 1.0f / 8.0f,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           false /* add bias */, false /* broadcast batch c */);
 }
 
@@ -349,7 +350,7 @@ TEST(QOrderedTest, MatMul_bias_addC_COL4_4R2_8C_16x32x32) {
   std::vector<int64_t> shapeB = {32, 32};
   std::vector<int64_t> shapeY = {16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4.0f, 1.0f / 4.0f, 1.0f / 5.0f, 1.0f / 8.0f,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           true /* add bias */, true /* broadcast batch c */);
 }
 
@@ -358,7 +359,7 @@ TEST(QOrderedTest, MatMul_COL4_4R2_8C_16x32x32_b2_1) {
   std::vector<int64_t> shapeB = {1, 32, 32};
   std::vector<int64_t> shapeY = {2, 16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4, 1.0f / 4, 0.0f, 1.0f / 8,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           false /* add bias */, false /* broadcast batch c */);
 }
 
@@ -367,7 +368,7 @@ TEST(QOrderedTest, MatMul_bias_COL4_4R2_8C_16x32x32_b2_1) {
   std::vector<int64_t> shapeB = {1, 32, 32};
   std::vector<int64_t> shapeY = {2, 16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4, 1.0f / 4, 0.0f, 1.0f / 8,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           true /* add bias */, false /* broadcast batch c */);
 }
 
@@ -376,7 +377,7 @@ TEST(QOrderedTest, MatMul_addC_COL4_4R2_8C_16x32x32_b2_1) {
   std::vector<int64_t> shapeB = {1, 32, 32};
   std::vector<int64_t> shapeY = {2, 16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4, 1.0f / 4, 1.0f / 5.0f, 1.0f / 8,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           false /* add bias */, false /* broadcast batch c */);
 }
 
@@ -385,7 +386,7 @@ TEST(QOrderedTest, MatMul_addC_broadcastC_COL4_4R2_8C_16x32x32_b2_1) {
   std::vector<int64_t> shapeB = {1, 32, 32};
   std::vector<int64_t> shapeY = {2, 16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4, 1.0f / 4, 1.0f / 5.0f, 1.0f / 8,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           false /* add bias */, true /* broadcast batch c */);
 }
 
@@ -394,7 +395,7 @@ TEST(QOrderedTest, MatMul_addC_bias_COL4_4R2_8C_16x32x32_b2_1) {
   std::vector<int64_t> shapeB = {1, 32, 32};
   std::vector<int64_t> shapeY = {2, 16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4, 1.0f / 4, 1.0f / 5.0f, 1.0f / 8,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           true /* add bias */, false /* broadcast batch c */);
 }
 
@@ -403,7 +404,7 @@ TEST(QOrderedTest, MatMul_bias_addC_broadcastC_COL4_4R2_8C_16x32x32_b2_1) {
   std::vector<int64_t> shapeB = {1, 32, 32};
   std::vector<int64_t> shapeY = {2, 16, 32};
   RunQOrdered_MatMul_Test(shapeA, shapeB, shapeY, ORDER_COL4_4R2_8C,
-                          1.0f / 4, 1.0f / 4, 1.0f / 5.0f, 1.0f / 8,
+                          1.0f / 32.0f, 1.0f / 32.0f, 0.0f /*scaleC*/, 2.0f,
                           true /* add bias */, true /* broadcast batch c */);
 }
 
