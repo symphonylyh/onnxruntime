@@ -23,6 +23,29 @@ union U4S2 {
   short2 s2;
 };
 
+template <typename CharVecT>
+struct HalfVecMap {
+}; 
+
+template struct HalfVecMap<char2> {
+typedef __half2 MappedType;
+};
+
+template struct HalfVecMap<char4> {
+typedef __half4 MappedType;
+};
+
+template <typename CharVectT>
+struct QuantizeHalfVec {
+    HlafVecMap<CharVecT>::MappedType operator(CharVecT chars, __half2 inverse_scale2);
+};
+
+template 
+struct QuantizeHalfVec<char2> {
+    HlafVecMap<CharVecT> operator(CharVecT chars, __half2 inverse_scale2);
+};
+
+
 __device__ inline int8_t quantize_float_s8(const float& val, const float& inverse_scale) {
   float dqval = fmaxf(fminf(127.0f, val * inverse_scale), -128.0f);
   return static_cast<int8_t>(__float2int_rn(dqval));
@@ -145,19 +168,15 @@ void QOrderQuantizeRowToCol32(cudaStream_t stream, const cudaDeviceProp& /*devic
 
 // thread block size should be (256 (elements in 4), 1, 1)
 // grid size ((N + 1023) / 1024, 1, 1)
-template <unsigned ElementsPerThread = 4>
+template <typename TCharVec> // char, char2, char4, 
 __global__ void
 QOrderQuantizeHalfKernel(const __half* __restrict__ src, int8_t* __restrict__ dst,
                          const __half2 inverse_scale2, size_t N) {
-  size_t index = ((size_t)blockIdx.x * blockDim.x + threadIdx.x) << 2;
-
-#pragma unroll
-  for (int i = 0; i < ElementsPerThread; i++) {
-    if (index < N) {
-      __half4 const src_val4 = *((const __half4*)(src + index));
-      *(char4*)(dst + index) = quantize_half4_char4(src_val4, inverse_scale2);
-      index += blockDim.x;
-    }
+  typedef HalfVecMap<TCharVec>::MappedType THalfVec;
+  size_t index = ((size_t)blockIdx.x * blockDim.x + threadIdx.x) * sizeof(TCharVec);
+  if (index < N) {
+    TCharVec const src_vals = *((const TCharVec*)(src + index));
+    *(THalfVec*)(dst + index) = quantize_half4_char4(src_val4, inverse_scale2);
   }
 }
 
@@ -265,6 +284,70 @@ void QOrderDequantizeCol32ToRow(cudaStream_t stream, const cudaDeviceProp& /*dev
   dim3 blocks(cols / 32, (rows + 31) / 32, batch);
   size_t stride = (size_t)rows * cols;
   QOrderDequantizeCol32ToFloatRowKernel<<<blocks, threads, 0, stream>>>(src, stride, dst, stride, scale, rows, cols);
+}
+
+/************************************************************************
+ * Dequantize Routines:
+ *   - fp16/32 output, do no care order
+ ************************************************************************/
+
+// thread block size should be (256 (elements in 4), 1, 1)
+// grid size ((N + 1023) / 1024, 1, 1)
+template <unsigned ElementsPerThread = 4>
+__global__ void
+QOrderDeuantizeHalfKernel(const int8_t* __restrict__ src, __half* __restrict__ dst,
+                         const __half2 scale2, size_t N) {
+  size_t index = ((size_t)blockIdx.x * blockDim.x + threadIdx.x) << 2;
+
+#pragma unroll
+  for (int i = 0; i < ElementsPerThread; i++) {
+    if (index < N) {
+      __half4 const src_val4 = *((const __half4*)(src + index));
+      *(char4*)(dst + index) = quantize_half4_char4(src_val4, inverse_scale2);
+      index += blockDim.x;
+    }
+  }
+}
+
+void QOrderQuantize(cudaStream_t stream, const cudaDeviceProp& /* device_prop */,
+                    const __half* src, int8_t* dst, float scale, size_t N) {
+  if (N & 0x1fLL) {
+    throw std::runtime_error("N can not divide by 32!");
+  }
+
+  __half2 inverse_scale2 = __float2half2_rn(1.0f / scale);
+  dim3 threads(256, 1, 1);
+  dim3 blocks((N + 1023) / 1024, 1, 1);
+  QOrderQuantizeHalfKernel<<<blocks, threads, 0, stream>>>(src, dst, inverse_scale2, N);
+}
+
+// thread block size should be (256 (elements in 4), 1, 1)
+// grid size ((N + 1023) / 1024, 1, 1)
+template <unsigned ElementsPerThread = 4>
+__global__ void
+QOrderQuantizeFloatKernel(const float* __restrict__ src, int8_t* __restrict__ dst,
+                          const float inverse_scale, size_t N) {
+  size_t index = (size_t)blockIdx.x * blockDim.x * ElementsPerThread + threadIdx.x;
+#pragma unroll
+  for (int i = 0; i < ElementsPerThread; i++) {
+    if (index < N) {
+      *(dst + index) = quantize_float_s8(*(src + index), inverse_scale);
+      index += blockDim.x;
+    }
+  }
+}
+
+void QOrderQuantize(cudaStream_t stream, const cudaDeviceProp& device_prop,
+                    const float* src, int8_t* dst, float scale, size_t N) {
+  if (N & 0x1f) {
+    throw std::runtime_error("N can not divide by 32!");
+  }
+
+  static constexpr unsigned kElementsPerThread = 4;
+  float inverse_scale = 1.0f / scale;
+  dim3 threads(256, 1, 1);
+  dim3 blocks((N + (threads.x * kElementsPerThread - 1)) / (threads.x * kElementsPerThread), 1, 1);
+  QOrderQuantizeFloatKernel<kElementsPerThread><<<blocks, threads, 0, stream>>>(src, dst, inverse_scale, N);
 }
 
 static constexpr unsigned QORDER_LAYERNORM_ROWS_PER_BLOCK = 8;  // 4, 8, 16, ...
