@@ -11,16 +11,14 @@ namespace contrib {
 namespace cuda {
 
 template <typename T>
-void QOrderQuantize(cudaStream_t stream, const cudaDeviceProp& /* device_prop */,
-                    const T* src, int8_t* dst, size_t N, T scale);
+void QOrderQuantize(
+    cudaStream_t stream, const cudaDeviceProp& device_prop,
+    const T* src, int8_t* dst, size_t N, T scale);
 
+template <typename T>
 void QOrderDequantize(
     cudaStream_t stream, const cudaDeviceProp& device_prop,
-    const int8_t* src, half* dst, half scale, size_t N);
-
-void QOrderDequantize(
-    cudaStream_t stream, const cudaDeviceProp& device_prop,
-    const int8_t* src, float* dst, float scale, size_t N);
+    const int8_t* src, T* dst, size_t N, T scale);
 
 void QOrderQuantizeRowToCol32(
     cudaStream_t stream, const cudaDeviceProp& device_prop,

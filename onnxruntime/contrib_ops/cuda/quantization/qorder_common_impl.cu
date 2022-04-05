@@ -10,6 +10,8 @@ namespace cuda {
 
 using namespace onnxruntime::cuda;
 
+// todo: define __dp4a when it is not available (i.e. before compute capability 6.1)
+
 /*
  * Utilility types and functions
  */
@@ -316,7 +318,8 @@ struct FloatVecSelector<float> {
 // grid size: (N + BLOCK_SIZE * EPB - 1) / EPB
 template <typename FloatVecT, unsigned ElementsPerThread = 4>
 __global__ void
-QOrderQuantizeKernel(const __half* __restrict__ src, int8_t* __restrict__ dst, size_t N,
+QOrderQuantizeKernel(const typename DequantizeVec<FloatVecT>::DequantizedScalarT* __restrict__ src,
+                     int8_t* __restrict__ dst, size_t N,
                      const typename DequantizeVec<FloatVecT>::DequantizedScalarT inverse_scale) {
   typedef typename DequantizeVec<FloatVecT>::QuantizedVecT CharVecT;
   size_t index = (size_t)blockIdx.x * blockDim.x * (sizeof(CharVecT) * ElementsPerThread) + threadIdx.x * sizeof(CharVecT);
@@ -364,11 +367,13 @@ template void QOrderQuantize<__half>(cudaStream_t stream, const cudaDeviceProp& 
 // grid size: (N + BLOCK_SIZE * EPB - 1) / EPB
 template <typename FloatVecT, unsigned ElementsPerThread = 4>
 __global__ void
-QOrderDequantizeKernel(const int8_t* __restrict__ src, __half* __restrict__ dst, size_t N,
+QOrderDequantizeKernel(const int8_t* __restrict__ src,
+                       const typename DequantizeVec<FloatVecT>::DequantizedScalarT* __restrict__ dst,
+                       size_t N,
                        const typename DequantizeVec<FloatVecT>::DequantizedScalarT scale) {
   typedef typename DequantizeVec<FloatVecT>::QuantizedVecT CharVecT;
-  size_t index = (size_t)blockIdx.x * blockDim.x * (sizeof(CharVecT) * ElementsPerThread) + threadIdx.x * sizeof(CharVecT);
   unsigned inc_per_iter = blockDim.x * sizeof(CharVecT);
+  size_t index = (size_t)blockIdx.x * inc_per_iter * ElementsPerThread + threadIdx.x * sizeof(CharVecT);
 #pragma unroll
   for (int i = 0; i < ElementsPerThread; i++) {
     if (index < N) {
@@ -388,15 +393,24 @@ void QOrderDequantize(cudaStream_t stream, const cudaDeviceProp& /* device_prop 
 
   typedef typename FloatVecSelector<T>::FloatVecT FloatVecT;
   typedef typename DequantizeVec<FloatVecT>::QuantizedVecT QuantizedVecT;
+  static constexpr unsigned kElementsPerThread = 2;
 
-  static constexpr unsigned kElementsPerThread = 4;
   unsigned int threads = 256;
   unsigned int EPB = threads * sizeof(QuantizedVecT) * kElementsPerThread;
   size_t blocks = (N + (EPB - 1)) / EPB;
   QOrderDequantizeKernel<FloatVecT, kElementsPerThread><<<blocks, threads, 0, stream>>>(src, dst, N, scale);
 }
 
+template void QOrderDequantize<float>(cudaStream_t stream, const cudaDeviceProp& device_prop,
+                                      const int8_t* src, float* dst, size_t N, float scale);
 
+template void QOrderDequantize<__half>(cudaStream_t stream, const cudaDeviceProp& device_prop,
+                                       const int8_t* src, __half* dst, size_t N, __half scale);
+
+/************************************************************************
+ * QOrdered Layernorm with compute type fp16:
+ *   - input is int8 with order COL32
+ ************************************************************************/
 
 static constexpr unsigned QORDER_LAYERNORM_ROWS_PER_BLOCK = 8;  // 4, 8, 16, ...
 // block_size = (32, QORDER_LAYERNORM_ROWS_PER_BLOCK, 1)

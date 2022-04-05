@@ -223,7 +223,8 @@ static void RunQOrdered_MatMul_Test(
     std::vector<int64_t> const& shapeB,
     std::vector<int64_t> const& shapeY,
     OrderCublasLt order_weight,
-    float scaleA, float scaleB, float scaleY) {
+    float scaleA, float scaleB, float scaleY,
+    bool add_bias = false, bool add_matrix_C = false) {
   int64_t nY = std::accumulate(shapeY.begin(), shapeY.end(), int64_t{1LL}, std::multiplies<int64_t>());
   std::vector<int8_t> vecA = GenData<int8_t>(shapeA, 1.0f);
   std::vector<int8_t> vecB = GenData<int8_t>(shapeB, 1.0f);

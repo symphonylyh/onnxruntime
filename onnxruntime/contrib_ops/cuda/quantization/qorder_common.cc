@@ -329,9 +329,9 @@ Status QuantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
     auto q8_buffer = GetScratchBuffer<int8_t>(order_input_ == order_output_ ? 0LL : n);
     int8_t* dst = (order_input_ == order_output_ ? output_tensor->MutableData<int8_t>() : q8_buffer.get());
     if (input_tensor.IsDataType<float>()) {
-      QOrderQuantize(stream, device_prop, input_tensor.Data<float>(), dst, *(const float*)scale, n);
+      QOrderQuantize(stream, device_prop, input_tensor.Data<float>(), dst, n, *(const float*)scale);
     } else {
-      QOrderQuantize(stream, device_prop, (const half*)input_tensor.Data<MLFloat16>(), dst, (float)*(const MLFloat16*)scale, n);
+      QOrderQuantize(stream, device_prop, (const half*)input_tensor.Data<MLFloat16>(), dst, n, *(const half*)scale);
     }
 
     if (order_input_ != order_output_) {
@@ -354,7 +354,7 @@ Status DequantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
   const Tensor& scale_tensor = *context->Input<Tensor>(1);
   const void* scale = scale_tensor.DataRaw();
   Tensor* output_tensor = context->Output(0, input_tensor.Shape());
-  // cublasLtHandle_t cublasLt = CublasLtHandle();
+  cublasLtHandle_t cublasLt = CublasLtHandle();
   cudaStream_t stream = Stream();
   const auto& device_prop = GetDeviceProp();
 
@@ -370,9 +370,9 @@ Status DequantizeWithOrder::ComputeInternal(OpKernelContext* context) const {
       src = (const int8_t*)q8_buffer.get();
     }
     if (scale_tensor.IsDataType<float>()) {
-      ORT_RETURN_IF_ERROR(CudaDequantizeLinear(stream, src, output_tensor->MutableData<float>(), (const float*)scale, (const int8_t*)nullptr, n));
+      QOrderDequantize(stream, device_prop, src, output_tensor->MutableData<float>(), n, *(const float*)scale);
     } else {
-      ORT_RETURN_IF_ERROR(CudaDequantizeLinear(stream, src, (half*)output_tensor->MutableData<MLFloat16>(), (const half*)scale, (const int8_t*)nullptr, n));
+      QOrderDequantize(stream, device_prop, src, (half*)output_tensor->MutableData<MLFloat16>(), n, *(const half*)scale);
     }
   }
 
