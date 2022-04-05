@@ -10,13 +10,9 @@ namespace onnxruntime {
 namespace contrib {
 namespace cuda {
 
-void QOrderQuantize(
-    cudaStream_t stream, const cudaDeviceProp& device_prop,
-    const __half* src, int8_t* dst, half scale, size_t N);
-
-void QOrderQuantize(
-    cudaStream_t stream, const cudaDeviceProp& device_prop,
-    const float* src, int8_t* dst, float scale, size_t N);
+template <typename T>
+void QOrderQuantize(cudaStream_t stream, const cudaDeviceProp& /* device_prop */,
+                    const T* src, int8_t* dst, size_t N, T scale);
 
 void QOrderDequantize(
     cudaStream_t stream, const cudaDeviceProp& device_prop,
