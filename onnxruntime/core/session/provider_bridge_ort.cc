@@ -1060,12 +1060,7 @@ struct ProviderLibrary {
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ProviderLibrary);
 };
 
-static ProviderLibrary s_library_cuda(LIBRARY_PREFIX "onnxruntime_providers_cuda" LIBRARY_EXTENSION
-#ifndef _WIN32
-                                      ,
-                                      false /* unload - On Linux if we unload the cuda shared provider we crash */
-#endif
-);
+static ProviderLibrary s_library_cuda(LIBRARY_PREFIX "onnxruntime_providers_cuda" LIBRARY_EXTENSION);
 static ProviderLibrary s_library_rocm(LIBRARY_PREFIX "onnxruntime_providers_rocm" LIBRARY_EXTENSION
 #ifndef _WIN32
                                       ,
